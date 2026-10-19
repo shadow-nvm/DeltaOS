@@ -1,0 +1,36 @@
+---
+componentName: deltaos
+welcomeStyleCalamares: true
+welcomeExpandingLogo: true
+windowExpanding: normal
+windowSize: 800px,580px
+windowPlacement: center
+
+strings:
+    productName: DeltaOS
+    shortProductName: DeltaOS
+    version: 0.1.0
+    shortVersion: 0.1.0
+    versionedName: DeltaOS 0.1.0 Aurora
+    shortVersionedName: DeltaOS 0.1.0
+    bootloaderEntryName: DeltaOS
+    releaseNotesTitle: DeltaOS Aurora
+    knownIssuesTitle: Project status
+
+sidebar: widget
+navigation: widget
+
+images:
+    productLogo: "deltaos-logo.png"
+    productIcon: "deltaos-logo.png"
+    productWelcome: "deltaos-welcome.png"
+
+slideshow: "show.qml"
+
+style:
+    SidebarBackground: "#0b1026"
+    SidebarText: "#eef2ff"
+    SidebarTextCurrent: "#ffffff"
+    SidebarBackgroundCurrent: "#1c2a55"
+
+slideshowAPI: 2

@@ -1,0 +1,99 @@
+#!/bin/bash
+# Register the live desktop, installer entry, and DeltaHub first-run screen.
+set -e
+
+echo "==> DeltaOS: configuring the desktop session"
+
+enable() {
+    systemctl enable "$1" >/dev/null 2>&1 || true
+}
+
+enable sddm
+enable NetworkManager
+enable systemd-timesyncd
+enable power-profiles-daemon
+enable upower
+
+# The live system logs in automatically. The service writes its SDDM setting
+# only when /run/live/medium exists. Calamares installs the read-only squashfs
+# contents, so this runtime-only setting is not copied into an installed OS.
+mkdir -p /usr/share/deltaos /usr/lib/systemd/system
+cat > /usr/share/deltaos/sddm-live.conf <<'EOF'
+[Autologin]
+User=live
+Session=plasma.desktop
+EOF
+cat > /usr/lib/systemd/system/deltaos-live-autologin.service <<'EOF'
+[Unit]
+Description=Set up automatic login for the DeltaOS live session
+ConditionPathExists=/run/live/medium
+After=local-fs.target
+Before=sddm.service
+
+[Service]
+Type=oneshot
+ExecStart=/bin/sh -c '/usr/bin/install -D -m 0644 /usr/share/deltaos/sddm-live.conf /etc/sddm.conf.d/60-deltaos-live.conf && /usr/bin/install -D -m 0644 /usr/share/deltaos/deltaos-install.desktop /usr/share/applications/deltaos-install.desktop'
+RemainAfterExit=yes
+
+[Install]
+WantedBy=graphical.target
+EOF
+enable deltaos-live-autologin.service
+
+# Set a clear DeltaOS identity while preserving Debian compatibility metadata.
+DELTA_VERSION="$(sed -n 's/^VERSION=//p' /etc/deltaos/release 2>/dev/null | head -n 1)"
+DELTA_VERSION="${DELTA_VERSION:-0.1.0}"
+cat > /etc/os-release <<EOF
+NAME="DeltaOS"
+PRETTY_NAME="DeltaOS Aurora ${DELTA_VERSION}"
+ID=deltaos
+ID_LIKE=debian
+VERSION_ID="${DELTA_VERSION}"
+VERSION_CODENAME=trixie
+EOF
+
+# Calamares is shown in the application menu only during a live session. The
+# runtime service adds this entry to the writable live overlay, so it is not
+# left behind in the installed system.
+cat > /usr/share/deltaos/deltaos-install.desktop <<'EOF'
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=Install DeltaOS
+Comment=Install DeltaOS to this computer
+Exec=pkexec /usr/bin/calamares -d
+Icon=calamares
+Terminal=false
+Categories=System;Settings;
+StartupNotify=true
+EOF
+
+# Install the DeltaOS branding files where Calamares expects them.
+if [ -d /usr/share/deltaos/calamares-branding ]; then
+    mkdir -p /etc/calamares/branding/deltaos
+    cp -a /usr/share/deltaos/calamares-branding/. /etc/calamares/branding/deltaos/
+fi
+
+# One first-run entry per new account prevents two welcome windows opening at
+# the same time. The same flow exposes the installer only during a live boot.
+if [ -f /usr/bin/deltahub ]; then
+    chmod 0755 /usr/bin/deltahub
+    mkdir -p /etc/skel/.config/autostart
+    cat > /etc/skel/.config/autostart/deltaos-firstlogin.desktop <<'EOF'
+[Desktop Entry]
+Type=Application
+Name=DeltaOS First Run
+Comment=Welcome to DeltaOS
+Exec=/usr/bin/deltahub --first-run
+Icon=deltaos
+Terminal=false
+OnlyShowIn=KDE;
+X-GNOME-Autostart-enabled=true
+EOF
+fi
+
+if command -v plymouth-set-default-theme >/dev/null 2>&1; then
+    plymouth-set-default-theme deltaos -R || true
+fi
+
+echo "==> DeltaOS: desktop is configured"

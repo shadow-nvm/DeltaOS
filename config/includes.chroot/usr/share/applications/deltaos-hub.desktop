@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=DeltaHub
+GenericName=DeltaOS Control Center
+Comment=System information, apps, and DeltaOS setup
+Exec=/usr/bin/deltahub
+Icon=deltaos
+Terminal=false
+Categories=System;Settings;
+StartupNotify=true

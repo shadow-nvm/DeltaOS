@@ -1,0 +1,618 @@
+#!/usr/bin/python3
+"""DeltaHub: DeltaOS welcome screen and desktop control center."""
+
+from __future__ import annotations
+
+import configparser
+import platform
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+from collections.abc import Callable
+
+from PyQt6.QtCore import Qt, QProcess, QTimer
+from PyQt6.QtGui import QPixmap
+from PyQt6.QtWidgets import (
+    QApplication,
+    QDialog,
+    QFileDialog,
+    QFrame,
+    QHBoxLayout,
+    QLabel,
+    QMainWindow,
+    QMessageBox,
+    QPushButton,
+    QScrollArea,
+    QSizePolicy,
+    QStackedWidget,
+    QVBoxLayout,
+    QWidget,
+)
+
+
+APP_NAME = "DeltaHub"
+ARTWORK = Path("/usr/share/deltaos/artwork")
+SETTINGS = Path.home() / ".config/deltaos.conf"
+IS_LIVE = Path("/run/live/medium").exists()
+ACCENT = "#40dfce"
+
+
+def read_os_release() -> dict[str, str]:
+    result: dict[str, str] = {}
+    try:
+        for line in Path("/etc/os-release").read_text(encoding="utf-8").splitlines():
+            if "=" in line and not line.startswith("#"):
+                key, value = line.split("=", 1)
+                result[key] = value.strip().strip('"')
+    except OSError:
+        pass
+    return result
+
+
+def command_exists(name: str) -> bool:
+    return shutil.which(name) is not None
+
+
+def deltaos_version() -> str:
+    try:
+        for line in Path("/etc/deltaos/release").read_text(encoding="utf-8").splitlines():
+            if line.startswith("VERSION="):
+                return line.partition("=")[2].strip()
+    except OSError:
+        pass
+    return read_os_release().get("VERSION_ID", "0.1.0")
+
+
+def start_program(name: str, arguments: list[str] | None = None,
+                  parent: QWidget | None = None) -> bool:
+    executable = shutil.which(name)
+    if not executable:
+        QMessageBox.information(parent, APP_NAME,
+                                f"{name} is not available in this DeltaOS profile.")
+        return False
+    result = QProcess.startDetached(executable, arguments or [])
+    ok = result[0] if isinstance(result, tuple) else result
+    if not ok:
+        QMessageBox.warning(parent, APP_NAME, f"DeltaOS could not start {name}.")
+    return ok
+
+
+def config_file() -> configparser.ConfigParser:
+    config = configparser.ConfigParser()
+    if SETTINGS.is_file():
+        config.read(SETTINGS, encoding="utf-8")
+    return config
+
+
+def save_config(config: configparser.ConfigParser) -> None:
+    SETTINGS.parent.mkdir(parents=True, exist_ok=True)
+    with SETTINGS.open("w", encoding="utf-8") as handle:
+        config.write(handle)
+
+
+def make_button(text: str, primary: bool = False) -> QPushButton:
+    button = QPushButton(text)
+    button.setProperty("primary", primary)
+    button.setCursor(Qt.CursorShape.PointingHandCursor)
+    button.setMinimumHeight(42)
+    return button
+
+
+def make_card(title: str, detail: str = "") -> tuple[QFrame, QVBoxLayout]:
+    frame = QFrame()
+    frame.setObjectName("card")
+    frame.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+    layout = QVBoxLayout(frame)
+    layout.setContentsMargins(20, 18, 20, 18)
+    layout.setSpacing(9)
+    heading = QLabel(title)
+    heading.setObjectName("cardTitle")
+    layout.addWidget(heading)
+    if detail:
+        description = QLabel(detail)
+        description.setObjectName("muted")
+        description.setWordWrap(True)
+        layout.addWidget(description)
+    return frame, layout
+
+
+class WelcomeDialog(QDialog):
+    def __init__(self, parent: QWidget | None = None):
+        super().__init__(parent)
+        self.setWindowTitle("Welcome to DeltaOS")
+        self.setModal(True)
+        self.setMinimumWidth(560)
+        self.setObjectName("welcomeDialog")
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(32, 30, 32, 28)
+        layout.setSpacing(15)
+        logo = QLabel()
+        logo.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        pixmap_path = ARTWORK / "logo-128.png"
+        if pixmap_path.is_file():
+            logo.setPixmap(QPixmap(str(pixmap_path)).scaled(
+                88, 88, Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation))
+        else:
+            logo.setText("Δ")
+        layout.addWidget(logo)
+
+        title = QLabel("Welcome to DeltaOS")
+        title.setObjectName("welcomeTitle")
+        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(title)
+        subtitle = QLabel("A calm, capable desktop for study, games, and everyday work.")
+        subtitle.setObjectName("muted")
+        subtitle.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        subtitle.setWordWrap(True)
+        layout.addWidget(subtitle)
+
+        actions = QHBoxLayout()
+        actions.addStretch(1)
+        if IS_LIVE:
+            install = make_button("Install DeltaOS", primary=False)
+            install.clicked.connect(self.start_installer)
+            actions.addWidget(install)
+        explore = make_button("Open DeltaHub", primary=True)
+        explore.clicked.connect(self.accept)
+        actions.addWidget(explore)
+        layout.addLayout(actions)
+        hint = QLabel("Try the live desktop first. You can install from the desktop shortcut when ready.")
+        hint.setObjectName("muted")
+        hint.setWordWrap(True)
+        hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(hint)
+
+    def start_installer(self) -> None:
+        if start_program("pkexec", ["/usr/bin/calamares", "-d"], self):
+            self.reject()
+
+
+class DeltaHub(QMainWindow):
+    PAGES = ["Overview", "Gaming", "Windows apps", "Android apps",
+             "Software", "Appearance", "About"]
+
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle("DeltaHub — DeltaOS")
+        self.setMinimumSize(920, 640)
+        self.resize(1120, 760)
+        self._waydroid_session: QProcess | None = None
+        self._waydroid_output = ""
+        self._waydroid_ready = False
+        self._waydroid_ui_opened = False
+        root = QWidget()
+        root_layout = QHBoxLayout(root)
+        root_layout.setContentsMargins(0, 0, 0, 0)
+        root_layout.setSpacing(0)
+
+        sidebar = QFrame()
+        sidebar.setObjectName("sidebar")
+        sidebar.setFixedWidth(230)
+        side_layout = QVBoxLayout(sidebar)
+        side_layout.setContentsMargins(18, 22, 18, 20)
+        side_layout.setSpacing(8)
+        brand = QLabel("Δ  DeltaOS")
+        brand.setObjectName("brand")
+        side_layout.addWidget(brand)
+        tagline = QLabel("Your desktop, your way")
+        tagline.setObjectName("muted")
+        side_layout.addWidget(tagline)
+        side_layout.addSpacing(20)
+
+        self.nav_buttons: list[QPushButton] = []
+        self.stack = QStackedWidget()
+        for index, name in enumerate(self.PAGES):
+            button = QPushButton(name)
+            button.setObjectName("navButton")
+            button.setCheckable(True)
+            button.setCursor(Qt.CursorShape.PointingHandCursor)
+            button.clicked.connect(lambda checked=False, i=index: self.show_page(i))
+            side_layout.addWidget(button)
+            self.nav_buttons.append(button)
+            self.stack.addWidget(self.build_page(index))
+
+        side_layout.addStretch(1)
+        version = deltaos_version()
+        foot = QLabel(f"DeltaOS Aurora  {version}")
+        foot.setObjectName("muted")
+        side_layout.addWidget(foot)
+        root_layout.addWidget(sidebar)
+
+        content = QWidget()
+        content.setObjectName("content")
+        content_layout = QVBoxLayout(content)
+        content_layout.setContentsMargins(30, 24, 30, 28)
+        content_layout.setSpacing(14)
+        header = QHBoxLayout()
+        self.page_title = QLabel()
+        self.page_title.setObjectName("pageTitle")
+        header.addWidget(self.page_title)
+        header.addStretch(1)
+        live = QLabel("LIVE SESSION" if IS_LIVE else "INSTALLED SYSTEM")
+        live.setObjectName("badge")
+        header.addWidget(live)
+        content_layout.addLayout(header)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setWidget(self.stack)
+        content_layout.addWidget(scroll, 1)
+        root_layout.addWidget(content, 1)
+        self.setCentralWidget(root)
+        self.show_page(0)
+
+        self.refresh_timer = QTimer(self)
+        self.refresh_timer.timeout.connect(self.refresh_overview)
+        self.refresh_timer.start(15000)
+
+    def page(self, title: str, intro: str) -> tuple[QWidget, QVBoxLayout]:
+        widget = QWidget()
+        layout = QVBoxLayout(widget)
+        layout.setContentsMargins(0, 4, 8, 8)
+        layout.setSpacing(16)
+        intro_label = QLabel(intro)
+        intro_label.setObjectName("muted")
+        intro_label.setWordWrap(True)
+        layout.addWidget(intro_label)
+        return widget, layout
+
+    def add_action_card(self, layout: QVBoxLayout, title: str, detail: str,
+                        actions: list[tuple[str, Callable[[], None]]], note: str = "") -> None:
+        card, card_layout = make_card(title, detail)
+        row = QHBoxLayout()
+        for index, (label, callback) in enumerate(actions):
+            button = make_button(label, primary=(index == 0))
+            button.clicked.connect(callback)
+            row.addWidget(button)
+        row.addStretch(1)
+        card_layout.addLayout(row)
+        if note:
+            footnote = QLabel(note)
+            footnote.setObjectName("muted")
+            footnote.setWordWrap(True)
+            card_layout.addWidget(footnote)
+        layout.addWidget(card)
+
+    def build_page(self, index: int) -> QWidget:
+        if index == 0:
+            widget, layout = self.page("Overview", "A quick look at your system and the tools ready to use.")
+            self.system_summary = QLabel()
+            self.system_summary.setObjectName("systemSummary")
+            self.system_summary.setWordWrap(True)
+            layout.addWidget(self.system_summary)
+            self.status_labels: dict[str, QLabel] = {}
+            grid = QHBoxLayout()
+            for key, title in [("memory", "Memory"), ("disk", "Storage"), ("graphics", "Graphics")]:
+                card, card_layout = make_card(title)
+                value = QLabel("Checking…")
+                value.setObjectName("metric")
+                value.setWordWrap(True)
+                card_layout.addWidget(value)
+                self.status_labels[key] = value
+                grid.addWidget(card)
+            layout.addLayout(grid)
+            self.add_action_card(layout, "Start with a task", "Jump straight into common DeltaOS tools.", [
+                ("Open Software", lambda: self.show_page(4)),
+                ("System Settings", lambda: start_program("systemsettings", parent=self)),
+            ])
+            self.refresh_overview()
+            return widget
+
+        if index == 1:
+            widget, layout = self.page("Gaming", "Tools for native Linux games and many Windows games.")
+            self.add_action_card(layout, "Launch a game platform", "Steam and Lutris organize your libraries and install game runners.", [
+                ("Open Steam", lambda: start_program("steam", parent=self)),
+                ("Open Lutris", lambda: start_program("lutris", parent=self)),
+            ], "Performance varies by game, graphics driver, and hardware. Some games with kernel anti-cheat do not work through Wine or Proton.")
+            card, card_layout = make_card("Gaming tools", "Availability in this image")
+            for name, command in [("GameMode", "gamemoderun"), ("MangoHud", "mangohud"),
+                                  ("Gamescope", "gamescope"), ("Vulkan", "vulkaninfo")]:
+                status = "Ready" if command_exists(command) else "Not installed in this profile"
+                label = QLabel(f"{name}  ·  {status}")
+                label.setObjectName("statusLine")
+                card_layout.addWidget(label)
+            layout.addWidget(card)
+            return widget
+
+        if index == 2:
+            widget, layout = self.page("Windows apps", "Wine can run many Windows desktop programs without installing Windows.")
+            self.add_action_card(layout, "Run a Windows program", "Choose an .exe or .msi installer. Wine creates a Windows compatibility prefix the first time it runs.", [
+                ("Choose .exe / .msi", self.run_windows_app),
+            ], "Compatibility depends on the app. Windows drivers, Microsoft Store apps, and some anti-cheat games need Windows itself.")
+            card, card_layout = make_card("Compatibility layer", "")
+            wine_version = self.command_output(["wine", "--version"]) if command_exists("wine") else "Wine is not installed."
+            label = QLabel(wine_version)
+            label.setObjectName("statusLine")
+            card_layout.addWidget(label)
+            layout.addWidget(card)
+            return widget
+
+        if index == 3:
+            widget, layout = self.page("Android apps", "Waydroid runs Android in a Linux container when the kernel and graphics hardware support it.")
+            self.add_action_card(layout, "Prepare Android support", "The first setup downloads an Android system image and can take a few minutes.", [
+                ("Initialize Waydroid", self.initialize_waydroid),
+                ("Start Android", self.start_waydroid),
+            ], "Some devices and apps need Google services or hardware features that are not available in every setup. Android compatibility is optional.")
+            self.add_action_card(layout, "Install an APK", "Install an APK file into an initialized Waydroid container.", [
+                ("Choose APK", self.install_apk),
+            ])
+            status = QLabel(self.waydroid_status())
+            status.setObjectName("statusLine")
+            layout.addWidget(status)
+            return widget
+
+        if index == 4:
+            widget, layout = self.page("Software", "Find and install applications through the desktop software center.")
+            self.add_action_card(layout, "Discover applications", "Open Discover to browse Debian packages and configured Flatpak sources.", [
+                ("Open Discover", lambda: start_program("plasma-discover", parent=self)),
+                ("Enable Flathub", self.enable_flathub),
+            ], "Enabling Flathub adds its community app catalog. Review each app publisher before installing software.")
+            card, card_layout = make_card("Useful tools included", "")
+            label = QLabel("Firefox · LibreOffice · VLC · Dolphin · Kate · Konsole · Python")
+            label.setObjectName("statusLine")
+            label.setWordWrap(True)
+            card_layout.addWidget(label)
+            layout.addWidget(card)
+            return widget
+
+        if index == 5:
+            widget, layout = self.page("Appearance", "Choose a DeltaOS wallpaper and open the full Plasma settings.")
+            for filename, title in [("wallpaper-aurora.jpg", "Aurora"), ("wallpaper-dark.jpg", "Midnight")]:
+                path = ARTWORK / filename
+                if path.is_file():
+                    self.add_action_card(layout, title, "Set this wallpaper for your desktop.", [
+                        ("Apply wallpaper", lambda checked=False, p=path: self.set_wallpaper(p)),
+                    ])
+            self.add_action_card(layout, "More settings", "Adjust display, network, sound, power, and desktop behavior.", [
+                ("Open System Settings", lambda: start_program("systemsettings", parent=self)),
+            ])
+            return widget
+
+        widget, layout = self.page("About DeltaOS", "DeltaOS is a Debian-based Linux distribution using the KDE Plasma desktop.")
+        release = read_os_release()
+        distro = " ".join(part for part in (release.get("NAME"), release.get("VERSION")) if part)
+        card, card_layout = make_card("DeltaOS Aurora", "A live desktop you can try from USB, then install to disk.")
+        for line in [f"Version: {deltaos_version()}",
+                     f"Distribution: {distro or 'DeltaOS'}",
+                     f"Kernel: {platform.release()}",
+                     "Base: Debian GNU/Linux 13 (trixie)",
+                     "Desktop: KDE Plasma"]:
+            label = QLabel(line)
+            label.setObjectName("statusLine")
+            card_layout.addWidget(label)
+        layout.addWidget(card)
+        card, card_layout = make_card("Project status", "")
+        label = QLabel("This is an early community project. Windows and Android compatibility depends on each application and the computer's hardware. Keep backups before installing an operating system.")
+        label.setObjectName("muted")
+        label.setWordWrap(True)
+        card_layout.addWidget(label)
+        layout.addWidget(card)
+        return widget
+
+    def show_page(self, index: int) -> None:
+        self.stack.setCurrentIndex(index)
+        self.page_title.setText(self.PAGES[index])
+        for item, button in enumerate(self.nav_buttons):
+            button.setChecked(item == index)
+
+    def command_output(self, args: list[str]) -> str:
+        try:
+            result = subprocess.run(args, capture_output=True, text=True,
+                                    timeout=3, check=False)
+            return (result.stdout or result.stderr or "Command completed.").strip()
+        except (OSError, subprocess.TimeoutExpired):
+            return "Could not read the version right now."
+
+    def refresh_overview(self) -> None:
+        release = read_os_release()
+        cpu = "Unknown processor"
+        try:
+            for line in Path("/proc/cpuinfo").read_text(errors="replace").splitlines():
+                if line.lower().startswith("model name"):
+                    cpu = line.split(":", 1)[1].strip()
+                    break
+        except OSError:
+            pass
+        self.system_summary.setText(
+            f"{release.get('PRETTY_NAME', 'DeltaOS')}  ·  {platform.machine()}  ·  {cpu}")
+
+        try:
+            memory_lines = Path("/proc/meminfo").read_text().splitlines()
+            memory_kb = int(memory_lines[0].split()[1])
+            self.status_labels["memory"].setText(f"{memory_kb // 1024 // 1024} GB RAM detected")
+        except (OSError, ValueError, IndexError):
+            self.status_labels["memory"].setText("Memory information unavailable")
+        try:
+            disk = shutil.disk_usage("/")
+            self.status_labels["disk"].setText(f"{disk.free // (1024**3)} GB free on the system volume")
+        except OSError:
+            self.status_labels["disk"].setText("Storage information unavailable")
+        gpu = self.command_output(["lspci"]) if command_exists("lspci") else "Graphics information unavailable"
+        gpu_line = next((line.split(":", 2)[-1].strip() for line in gpu.splitlines()
+                         if "vga" in line.lower() or "3d controller" in line.lower()), "See System Settings")
+        self.status_labels["graphics"].setText(gpu_line[:96])
+
+    def run_windows_app(self) -> None:
+        if not command_exists("wine"):
+            QMessageBox.information(self, APP_NAME, "Wine is not installed in this DeltaOS image.")
+            return
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Choose a Windows installer or program", str(Path.home()),
+            "Windows programs (*.exe *.msi);;All files (*)")
+        if path:
+            start_program("wine", [path], self)
+
+    def initialize_waydroid(self) -> None:
+        if not command_exists("waydroid"):
+            QMessageBox.information(self, APP_NAME,
+                                    "Waydroid is not available in this image. Connect to the internet and check the Android support setup in the project guide.")
+            return
+        start_program("pkexec", ["waydroid", "init"], self)
+
+    def start_waydroid(self) -> None:
+        if not command_exists("waydroid"):
+            QMessageBox.information(self, APP_NAME, "Waydroid is not installed in this image.")
+            return
+        if self._waydroid_session and self._waydroid_session.state() != QProcess.ProcessState.NotRunning:
+            if self._waydroid_ready:
+                start_program("waydroid", ["show-full-ui"], self)
+            else:
+                QMessageBox.information(self, APP_NAME, "Android is still starting. Wait for the session to become ready.")
+            return
+        self._waydroid_output = ""
+        self._waydroid_ready = False
+        self._waydroid_ui_opened = False
+        process = QProcess(self)
+        process.setProcessChannelMode(QProcess.ProcessChannelMode.MergedChannels)
+        process.readyReadStandardOutput.connect(
+            lambda p=process: self.read_waydroid_session_output(p))
+        process.errorOccurred.connect(
+            lambda error, p=process: self.waydroid_session_error(p, error))
+        process.finished.connect(
+            lambda code, status, p=process: self.waydroid_session_finished(p, code))
+        self._waydroid_session = process
+        process.start("waydroid", ["session", "start"])
+        QMessageBox.information(self, APP_NAME, "Starting Android. Its window will open when Waydroid is ready.")
+
+    def read_waydroid_session_output(self, process: QProcess) -> None:
+        chunk = bytes(process.readAllStandardOutput()).decode("utf-8", errors="replace")
+        self._waydroid_output = (self._waydroid_output + chunk)[-8192:]
+        if "Android with user 0 is ready" in self._waydroid_output:
+            self._waydroid_ready = True
+            self.open_waydroid_ui()
+
+    def open_waydroid_ui(self) -> None:
+        if self._waydroid_ui_opened:
+            return
+        self._waydroid_ui_opened = True
+        if not start_program("waydroid", ["show-full-ui"], self):
+            self._waydroid_ui_opened = False
+
+    def waydroid_session_error(self, process: QProcess,
+                               error: QProcess.ProcessError) -> None:
+        if process == self._waydroid_session and error == QProcess.ProcessError.FailedToStart:
+            self._waydroid_session = None
+            self._waydroid_ready = False
+            process.deleteLater()
+            QMessageBox.warning(self, APP_NAME, "The Android session could not be started.")
+
+    def waydroid_session_finished(self, process: QProcess, exit_code: int) -> None:
+        if process != self._waydroid_session:
+            return
+        if exit_code != 0 and not self._waydroid_ui_opened:
+            detail = self._waydroid_output.strip().splitlines()[-1:]
+            message = detail[0] if detail else "Initialize Waydroid and check kernel support."
+            QMessageBox.warning(self, APP_NAME, f"The Android session did not start.\n{message}")
+        self._waydroid_session = None
+        self._waydroid_ready = False
+        self._waydroid_ui_opened = False
+        process.deleteLater()
+
+    def install_apk(self) -> None:
+        if not command_exists("waydroid"):
+            QMessageBox.information(self, APP_NAME, "Waydroid is not installed in this image.")
+            return
+        path, _ = QFileDialog.getOpenFileName(self, "Choose an Android APK", str(Path.home()), "Android packages (*.apk)")
+        if path:
+            start_program("waydroid", ["app", "install", path], self)
+
+    def waydroid_status(self) -> str:
+        if not command_exists("waydroid"):
+            return "Waydroid is not installed in this image."
+        try:
+            result = subprocess.run(["waydroid", "status"], capture_output=True,
+                                    text=True, timeout=4, check=False)
+            return (result.stdout or result.stderr or "Waydroid is installed; initialize it to begin.").strip()
+        except (OSError, subprocess.TimeoutExpired):
+            return "Waydroid is installed; status could not be read."
+
+    def enable_flathub(self) -> None:
+        answer = QMessageBox.question(
+            self, "Enable Flathub?",
+            "This adds Flathub as a system software source. Continue?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No)
+        if answer == QMessageBox.StandardButton.Yes:
+            start_program("pkexec", ["flatpak", "remote-add", "--if-not-exists",
+                                     "flathub", "https://flathub.org/repo/flathub.flatpakrepo"], self)
+
+    def set_wallpaper(self, image: Path) -> None:
+        if not command_exists("plasma-apply-wallpaperimage"):
+            QMessageBox.information(self, APP_NAME, "The Plasma wallpaper tool is not available in this session.")
+            return
+        start_program("plasma-apply-wallpaperimage", [str(image)], self)
+
+
+def apply_first_run_defaults() -> None:
+    defaults = Path("/etc/skel/.config/kdeglobals")
+    user_settings = Path.home() / ".config/kdeglobals"
+    if defaults.is_file() and not user_settings.exists():
+        user_settings.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(defaults, user_settings)
+    wallpaper = ARTWORK / "wallpaper-aurora.jpg"
+    if wallpaper.is_file() and command_exists("plasma-apply-wallpaperimage"):
+        subprocess.Popen(["plasma-apply-wallpaperimage", str(wallpaper)],
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    config = config_file()
+    if not config.has_section("session"):
+        config.add_section("session")
+    config.set("session", "first_run", "false")
+    save_config(config)
+
+
+def main() -> int:
+    app = QApplication(sys.argv)
+    app.setApplicationName(APP_NAME)
+    app.setOrganizationName("DeltaOS")
+    app.setStyle("Fusion")
+    app.setStyleSheet("""
+        QWidget { background: #101629; color: #eef2ff; font-family: Inter, 'Noto Sans', sans-serif; font-size: 14px; }
+        QMainWindow, #content { background: #101629; }
+        #sidebar { background: #0b1021; border-right: 1px solid #252e49; }
+        #brand { color: #f4f6ff; font-size: 21px; font-weight: 700; padding: 4px 0; }
+        #pageTitle { color: #f4f6ff; font-size: 26px; font-weight: 700; }
+        #muted { color: #a8b6d8; }
+        #badge { color: #40dfce; background: #18343c; border-radius: 10px; padding: 6px 10px; font-size: 11px; font-weight: 700; }
+        #navButton { color: #a8b6d8; text-align: left; border: 0; border-radius: 9px; padding: 11px 13px; }
+        #navButton:hover { background: #1a2340; color: #ffffff; }
+        #navButton:checked { background: #203752; color: #52e3d2; font-weight: 700; }
+        #card { background: #171f35; border: 1px solid #283452; border-radius: 15px; }
+        #cardTitle { color: #f4f6ff; font-size: 16px; font-weight: 700; }
+        #metric { color: #42dfce; font-size: 21px; font-weight: 650; }
+        #systemSummary { background: #171f35; border: 1px solid #283452; border-radius: 15px; padding: 17px; color: #dce5ff; }
+        #statusLine { color: #dce5ff; }
+        QPushButton { color: #eef2ff; background: #252f4b; border: 1px solid #394568; border-radius: 9px; padding: 8px 14px; }
+        QPushButton:hover { background: #31405f; }
+        QPushButton[primary="true"] { background: #2a998f; border-color: #40dfce; color: #07161a; font-weight: 700; }
+        QPushButton[primary="true"]:hover { background: #40dfce; }
+        QScrollArea, QScrollArea > QWidget > QWidget { background: transparent; }
+        #welcomeDialog { background: #101629; }
+        #welcomeTitle { font-size: 27px; font-weight: 700; }
+    """)
+
+    args = set(sys.argv[1:])
+    show_welcome = "--welcome" in args
+    first_run = "--first-run" in args
+    if first_run:
+        config = config_file()
+        if not config.getboolean("session", "first_run", fallback=True):
+            return 0
+        apply_first_run_defaults()
+        show_welcome = True
+
+    if show_welcome:
+        dialog = WelcomeDialog()
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return 0
+
+    window = DeltaHub()
+    window.show()
+    return app.exec()
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

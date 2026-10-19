@@ -1,0 +1,14 @@
+# Live installer. calamares-settings-debian supplies the Debian-tested module
+# configuration and unpackfs/fstab logic; DeltaOS overrides the branding and
+# the pages the user actually sees.
+calamares
+calamares-settings-debian
+qml6-module-qtquick
+qml6-module-qtquick-controls
+qml6-module-qtquick-layouts
+qml6-module-qtquick-window
+qml6-module-qtquick-templates
+qml6-module-qtqml-workerscript
+qml6-module-qt-labs-platform
+?qml6-module-qtquick-shapes
+?qml6-module-qt5compat-graphicaleffects

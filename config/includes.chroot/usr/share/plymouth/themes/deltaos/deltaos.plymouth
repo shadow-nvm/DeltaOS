@@ -1,0 +1,8 @@
+[Plymouth Theme]
+Name=DeltaOS
+Description=DeltaOS boot splash
+ModuleName=script
+
+[script]
+ImageDir=/usr/share/plymouth/themes/deltaos
+ScriptFile=/usr/share/plymouth/themes/deltaos/deltaos.script

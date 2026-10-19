@@ -1,0 +1,44 @@
+# Gaming + Windows application support.
+# Windows apps run through Wine / Proton; this is the same path Steam Deck and
+# every Linux gamer uses. Native Windows drivers, kernel drivers and kernel
+# anti-cheat cannot work -- that is a Windows kernel requirement, not packaging.
+steam-installer
+lutris
+gamemode
+mangohud
+# gamescope ships only in trixie-backports/contrib; the gaming hook installs
+# it with `apt-get install -t trixie-backports`.
+^gamescope
+wine
+wine64
+wine32:i386
+winetricks
+fonts-wine
+vulkan-tools
+vulkan-validationlayers
+mesa-vulkan-drivers
+libgl1-mesa-dri
+libglx-mesa0
+mesa-utils
+libvulkan1
+# Explicit i386 libraries make live-build enable Multi-Arch before Steam is
+# installed; these are needed by many 32-bit Steam games and graphics stacks.
+libgl1-mesa-dri:i386
+libglx-mesa0:i386
+mesa-vulkan-drivers:i386
+libvulkan1:i386
+xwayland
+# Optional: names drift between Debian releases.
+?wine-staging
+?bottles
+?dxvk
+?vkd3d
+?vkd3d-proton
+?libvkd3d1
+?libvkd3d2
+?libdxvk
+?steam-devices
+?prismlauncher
+?minetest
+?supertuxkart
+?0ad

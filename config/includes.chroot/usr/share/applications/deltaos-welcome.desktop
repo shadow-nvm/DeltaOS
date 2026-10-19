@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Welcome to DeltaOS
+Comment=Explore DeltaOS or start the installer
+Exec=/usr/bin/deltahub --welcome
+Icon=deltaos
+Terminal=false
+Categories=System;Settings;
+StartupNotify=true

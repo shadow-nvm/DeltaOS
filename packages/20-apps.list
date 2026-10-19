@@ -1,0 +1,26 @@
+# Everyday applications. Heavy office/research suites are optional so the
+# ISO can be built small (core) or full (see build/build-iso.sh --profile).
+firefox-esr
+libreoffice-writer
+libreoffice-calc
+vlc
+flatpak
+baobab
+evince
+# Optional everyday apps
+?libreoffice-impress
+?libreoffice-kf6
+?thunderbird
+?gimp
+?inkscape
+?audacity
+?obs-studio
+?telegram-desktop
+?qbittorrent
+?keepassxc
+?handbrake
+?celluloid
+?gnome-disk-utility
+?simple-scan
+?cheese
+?gnome-calculator

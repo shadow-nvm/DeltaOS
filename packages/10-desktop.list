@@ -1,0 +1,53 @@
+# DeltaOS desktop -- KDE Plasma 6 on Wayland.
+# Plasma provides a familiar, configurable desktop with a modern Wayland
+# session and X11 fallback for older hardware and virtual machines.
+plasma-desktop
+plasma-workspace
+plasma-nm
+plasma-pa
+plasma-systemmonitor
+plasma-discover
+systemsettings
+kscreen
+kwin-wayland
+kwin-x11
+sddm
+python3-pyqt6
+pkexec
+polkit-kde-agent-1
+xserver-xorg
+kde-config-gtk-style
+kde-config-screenlocker
+kde-style-breeze
+kde-spectacle
+breeze-cursor-theme
+powerdevil
+dolphin
+konsole
+kate
+ark
+okular
+gwenview
+kcalc
+filelight
+partitionmanager
+kinfocenter
+kmenuedit
+# Optional extras: present in trixie today, dropped automatically if renamed.
+?plasma-workspace-wayland
+?plasma-discover-backend-flatpak
+?kdeconnect
+?ksystemlog
+?sddm-theme-breeze
+?libpam-kwallet5
+?libpam-kwallet-common
+?kwalletmanager
+?bluedevil
+?kde-config-sddm
+?xserver-xorg-video-vmware
+?xserver-xorg-video-vesa
+?print-manager
+?kio-extras
+?ffmpegthumbs
+?kdegraphics-thumbnailers
+?plasma-workspace-wallpapers

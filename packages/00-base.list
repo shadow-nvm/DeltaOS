@@ -1,0 +1,96 @@
+# DeltaOS base system -- everything here MUST exist in Debian 13 trixie.
+# Installed before the desktop; keep this list lean, the ISO stays small.
+live-boot
+live-config
+live-config-systemd
+squashfs-tools
+file
+less
+nano
+vim-tiny
+sudo
+locales
+tzdata
+keyboard-configuration
+console-setup
+ca-certificates
+curl
+wget
+gnupg
+xz-utils
+zstd
+unzip
+zip
+pciutils
+usbutils
+lshw
+htop
+rsync
+parted
+gparted
+dosfstools
+mtools
+efibootmgr
+os-prober
+grub2-common
+grub-efi-amd64-bin
+grub-pc-bin
+# live-build's iso-hybrid step needs the isohybrid MBR from this package.
+# Keeping it in the image avoids live-build apt-installing it after the
+# package lists have already been cleaned.
+isolinux
+network-manager
+wpasupplicant
+rfkill
+bluez
+pipewire
+wireplumber
+pipewire-pulse
+pipewire-alsa
+alsa-utils
+pavucontrol-qt
+fonts-inter
+fonts-noto-core
+fonts-noto-color-emoji
+fonts-jetbrains-mono
+fonts-dejavu-core
+papirus-icon-theme
+breeze
+breeze-gtk-theme
+qt6-wayland
+xdg-utils
+xdg-desktop-portal
+xdg-desktop-portal-kde
+systemd-oomd
+zram-tools
+power-profiles-daemon
+upower
+plymouth
+plymouth-themes
+dbus-user-session
+# Hardware support: firmwares for common Wi-Fi, GPU and audio chips plus CPU
+# microcode. Without these a laptop may boot with no wireless at all, so they
+# are part of the base image rather than an add-on.
+firmware-linux-free
+firmware-iwlwifi
+firmware-atheros
+firmware-realtek
+firmware-brcm80211
+firmware-mediatek
+firmware-sof-signed
+firmware-amd-graphics
+firmware-misc-nonfree
+intel-microcode
+amd64-microcode
+# Nice-to-have command line polish
+?fastfetch
+?neofetch
+?btop
+?tmux
+?tree
+?fzf
+?ripgrep
+?fd-find
+?zoxide
+?git
+?openssh-client

@@ -1,0 +1,61 @@
+#!/bin/bash
+# Small, conservative defaults for DeltaOS. Hardware and user services stay
+# enabled; tuning should improve responsiveness without blocking features.
+set -e
+
+echo "==> DeltaOS: applying memory and desktop defaults"
+
+cat > /etc/default/zramswap <<'EOF'
+# Compressed memory swap for machines with limited RAM.
+ALGO=zstd
+PERCENT=50
+PRIORITY=100
+EOF
+
+cat > /etc/sysctl.d/90-deltaos-memory.conf <<'EOF'
+# Keep memory pressure manageable and allow modern games to map large assets.
+vm.swappiness=100
+vm.dirty_ratio=20
+vm.dirty_background_ratio=5
+vm.vfs_cache_pressure=80
+vm.max_map_count=2147483642
+EOF
+
+cat > /etc/modprobe.d/deltaos-snd.conf <<'EOF'
+# Avoid aggressive audio power saving on systems using Intel HDA audio.
+options snd_hda_intel power_save=0 power_save_controller=N
+EOF
+
+mkdir -p /etc/skel/.config
+cat > /etc/skel/.config/deltaos.conf <<'EOF'
+[session]
+first_run=true
+
+[power]
+profile=balanced
+
+[gaming]
+gamemode=auto
+mangohud=false
+gamescope=false
+
+[android]
+enabled=true
+backend=waydroid
+EOF
+
+cat > /etc/skel/.config/kdeglobals <<'EOF'
+[General]
+ColorScheme=BreezeDark
+font=Inter,10,-1,5,50,0,0,0,0,0
+
+[Icons]
+Theme=Papirus-Dark
+
+[KDE]
+SingleClick=false
+EOF
+
+systemctl enable zramswap >/dev/null 2>&1 || true
+
+echo "==> DeltaOS: defaults written"

@@ -1,0 +1,90 @@
+# DeltaOS boot splash -- Plymouth "script" plugin.
+#
+# Written against the documented script API as shipped in Debian's
+# plymouth 24.004.60 (Image/Sprite/Scale/SetPosition/SetOpacity,
+# Plymouth.SetRefreshFunction, SetBootProgressFunction, SetQuitFunction,
+# Plymouth.SetDisplayMessageFunction/SetHideMessageFunction).
+#
+# Rendering: dark gradient background, centred pulsing mark, thin progress
+# bar underneath, optional message text. Falls back to the plain text boot
+# if this file errors -- boot never depends on the splash.
+
+Window.SetBackgroundTopColor(0.055, 0.078, 0.160);
+Window.SetBackgroundBottomColor(0.020, 0.031, 0.071);
+
+logo.image = Image("deltaos-logo.png");
+logo.sprite = Sprite(logo.image);
+logo.pulse = 0;
+
+bar.track_image = Image("bar-track.png");
+bar.fill_original = Image("bar-fill.png");
+bar.track_sprite = Sprite(bar.track_image);
+bar.fill_sprite = Sprite();
+bar.width = 0;
+
+# No message is shown until the boot system sends one; drawing an empty
+# sprite keeps the message sprite addressable without inventing an image.
+message.sprite = Sprite();
+
+fun layout()
+  {
+    logo.x = Window.GetX() + (Window.GetWidth() - logo.image.GetWidth()) / 2;
+    logo.y = Window.GetY() + Window.GetHeight() * 0.34 - logo.image.GetHeight() / 2;
+    logo.sprite.SetPosition(logo.x, logo.y, 1);
+
+    bar.x = Window.GetX() + (Window.GetWidth() - bar.track_image.GetWidth()) / 2;
+    bar.y = Window.GetY() + Window.GetHeight() * 0.68;
+    bar.track_sprite.SetPosition(bar.x, bar.y, 1);
+    bar.fill_sprite.SetPosition(bar.x, bar.y, 2);
+  }
+
+fun refresh_callback()
+  {
+    # Gentle 0.5 Hz breathing pulse (50 refreshes per second).
+    logo.pulse += (2 * 3.14159) / 100;
+    opacity = (Math.Cos(logo.pulse) + 1) / 2;
+    logo.sprite.SetOpacity(0.55 + opacity * 0.45);
+  }
+
+fun progress_callback(duration, progress)
+  {
+    local.w;
+    w = Math.Int(bar.fill_original.GetWidth() * progress);
+    if (w < 1)
+      {
+        w = 1;
+      }
+    if (w != bar.width)
+      {
+        bar.width = w;
+        bar.fill_image = bar.fill_original.Scale(w, bar.fill_original.GetHeight());
+        bar.fill_sprite.SetImage(bar.fill_image);
+      }
+  }
+
+fun quit_callback()
+  {
+    logo.sprite.SetOpacity(1);
+  }
+
+fun message_callback(text)
+  {
+    message.image = Image.Text(text, 0.80, 0.86, 0.98);
+    message.sprite = Sprite(message.image);
+    message.sprite.SetPosition(
+        (Window.GetWidth() - message.image.GetWidth()) / 2,
+        Window.GetHeight() * 0.76, 3);
+  }
+
+fun hide_message_callback()
+  {
+    message.sprite = Sprite();
+  }
+
+layout();
+
+Plymouth.SetRefreshFunction(refresh_callback);
+Plymouth.SetBootProgressFunction(progress_callback);
+Plymouth.SetQuitFunction(quit_callback);
+Plymouth.SetDisplayMessageFunction(message_callback);
+Plymouth.SetHideMessageFunction(hide_message_callback);

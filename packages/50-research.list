@@ -1,0 +1,42 @@
+# Student + research tooling. Most of this is optional because the heavyweight
+# scientific stack adds ~1.5 GB; `--profile full` keeps it, `--profile core`
+# drops it and DeltaHub can install it later.
+python3
+python3-pip
+python3-venv
+python3-numpy
+build-essential
+gdb
+cmake
+ninja-build
+clang
+nodejs
+npm
+neovim
+# Zotero is not packaged in Debian; DeltaHub offers the Flatpak install.
+# Optional scientific / study stack
+?python3-scipy
+?python3-matplotlib
+?python3-pandas
+?python3-sympy
+?python3-jupyter
+?jupyter-notebook
+?jupyter-console
+?python3-tk
+?r-base
+?gnuplot
+?octave
+?texlive-latex-base
+?texlive-latex-recommended
+?texlive-latex-extra
+?texlive-science
+?texstudio
+?jabref
+?anki
+?kalgebra
+?kgeography
+?kstars
+?stellarium
+?geogebra
+?musescore3
+?blender

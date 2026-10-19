@@ -1,0 +1,48 @@
+#!/bin/bash
+# Install packages that only exist in trixie-backports (waydroid, gamescope)
+# and register the backports suite for the installed system so DeltaHub can
+# still pull them later. Missing entries are tolerated: the build must not
+# fail because one optional gaming package moved between Debian releases.
+set -e
+
+. /etc/os-release || true
+LIST=/etc/apt/sources.list.d/deltaos-backports.list
+
+if ! grep -Rqs 'trixie-backports' /etc/apt/sources.list /etc/apt/sources.list.d 2>/dev/null; then
+    echo "deb https://deb.debian.org/debian trixie-backports main contrib non-free non-free-firmware" > "$LIST"
+fi
+
+apt-get update -y -o Acquire::Retries=5 || true
+
+PKGS=""
+for pkg in $(grep -v '^#' /usr/share/live/build/package-lists/backports-packages.txt 2>/dev/null || true); do
+    if apt-cache show "$pkg" >/dev/null 2>&1; then
+        PKGS="$PKGS $pkg"
+    else
+        echo "deltaos: backports package $pkg unavailable, skipping"
+    fi
+done
+
+for pkg in $PKGS; do
+    apt-get install -y --no-install-recommends -t trixie-backports "$pkg" \
+        || echo "deltaos: backports package $pkg failed; continuing"
+done
+
+# Waydroid needs the Android binder driver. Add the module request only when
+# the optional backports package installed successfully.
+if dpkg-query -W -f='${db:Status-Abbrev}' waydroid 2>/dev/null | grep -q '^ii'; then
+    cat > /etc/modules-load.d/deltaos-binder.conf <<'EOF'
+# Required by Waydroid (Android app support)
+binder_linux
+EOF
+fi
+
+mkdir -p /var/lib/deltaos /etc/deltaos
+if [ -f /usr/share/deltaos/release ]; then
+    cp /usr/share/deltaos/release /etc/deltaos/release
+else
+    printf 'VERSION=0.1.0\nPROFILE=core\n' > /etc/deltaos/release
+fi
+
+apt-get clean
+rm -rf /var/lib/apt/lists/*
