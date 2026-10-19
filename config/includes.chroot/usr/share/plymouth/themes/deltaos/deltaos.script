@@ -48,7 +48,7 @@ fun refresh_callback()
 
 fun progress_callback(duration, progress)
   {
-    local.w;
+    local.w = 0;
     w = Math.Int(bar.fill_original.GetWidth() * progress);
     if (w < 1)
       {
@@ -69,16 +69,19 @@ fun quit_callback()
 
 fun message_callback(text)
   {
+    # Reuse one sprite: replacing it would leave the previous sprite in the
+    # draw list, so old status text would stay on screen under the new line.
     message.image = Image.Text(text, 0.80, 0.86, 0.98);
-    message.sprite = Sprite(message.image);
+    message.sprite.SetImage(message.image);
     message.sprite.SetPosition(
         (Window.GetWidth() - message.image.GetWidth()) / 2,
         Window.GetHeight() * 0.76, 3);
+    message.sprite.SetOpacity(1);
   }
 
 fun hide_message_callback()
   {
-    message.sprite = Sprite();
+    message.sprite.SetOpacity(0);
   }
 
 layout();
