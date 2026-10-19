@@ -1,4 +1,10 @@
 ---
+# DeltaOS installer branding.
+#
+# Structure follows Debian's shipped calamares-settings-debian branding.desc
+# step for step: the strings, images, style and slideshow groups are the ones
+# Calamares 3.3 actually loads, and a missing group aborts the installer.
+# build/build-iso.sh replaces the version fields from the VERSION file.
 componentName: deltaos
 welcomeStyleCalamares: true
 welcomeExpandingLogo: true
@@ -9,10 +15,10 @@ windowPlacement: center
 strings:
     productName: DeltaOS
     shortProductName: DeltaOS
-    version: 0.1.0
-    shortVersion: 0.1.0
-    versionedName: DeltaOS 0.1.0 Aurora
-    shortVersionedName: DeltaOS 0.1.0
+    version: 0.2.0
+    shortVersion: 0.2.0
+    versionedName: DeltaOS 0.2.0 Aurora
+    shortVersionedName: DeltaOS 0.2.0
     bootloaderEntryName: DeltaOS
     releaseNotesTitle: DeltaOS Aurora
     knownIssuesTitle: Project status

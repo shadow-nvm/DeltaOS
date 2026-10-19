@@ -1,0 +1,12 @@
+# DeltaOS is built on Linux, but the repository is often edited on Windows.
+# Without this file, Git for Windows with core.autocrlf=true checks the tree out
+# with CRLF line endings, and every shell hook, YAML file and QML slideshow then
+# fails on the build machine ("bad interpreter: /bin/bash^M").
+* text=auto eol=lf
+
+# Explicit binary types: never convert or diff these as text.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.ico binary
+*.pdf binary

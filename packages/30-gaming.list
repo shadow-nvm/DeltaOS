@@ -6,7 +6,7 @@ steam-installer
 lutris
 gamemode
 mangohud
-# gamescope ships only in trixie-backports/contrib; the gaming hook installs
+# gamescope ships only in trixie-backports/contrib; the backports hook installs
 # it with `apt-get install -t trixie-backports`.
 ^gamescope
 wine
@@ -38,6 +38,7 @@ xwayland
 ?libvkd3d2
 ?libdxvk
 ?steam-devices
+?cabextract
 ?prismlauncher
 ?minetest
 ?supertuxkart

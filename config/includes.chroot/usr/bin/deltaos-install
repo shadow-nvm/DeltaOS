@@ -1,0 +1,51 @@
+#!/bin/sh
+# Launch the DeltaOS installer from the live session.
+#
+# This is the same approach Debian uses for its own live images:
+#   * live-build leaves an /etc/fstab behind that makes Calamares' partition
+#     module show the running live system's mounts as if they were the target,
+#   * Calamares needs root, but root cannot open the user's display unless it
+#     is explicitly allowed,
+#   * Qt must not try to scale on its own on HiDPI panels.
+#
+# The installer only exists in a live session: the live systemd unit installs
+# the desktop entry at boot, and Calamares installs the read-only squashfs, so
+# an installed system never receives this launcher.
+set -u
+
+FSTAB=/etc/fstab
+BACKUP=/etc/fstab.deltaos-live
+
+as_root() {
+    "$@" 2>/dev/null && return 0
+    sudo -n "$@" 2>/dev/null && return 0
+    return 1
+}
+
+if [ -e "$FSTAB" ] && [ ! -e "$BACKUP" ]; then
+    as_root mv "$FSTAB" "$BACKUP" || true
+fi
+
+if [ -n "${DISPLAY:-}" ] && command -v xhost >/dev/null 2>&1; then
+    xhost +si:localuser:root >/dev/null 2>&1 || true
+fi
+
+export QT_AUTO_SCREEN_SCALE_FACTOR=1
+
+if ! command -v pkexec >/dev/null 2>&1; then
+    echo "deltaos-install: pkexec is missing; cannot start the installer" >&2
+    status=1
+else
+    pkexec /usr/bin/calamares -d
+    status=$?
+fi
+
+if [ -n "${DISPLAY:-}" ] && command -v xhost >/dev/null 2>&1; then
+    xhost -si:localuser:root >/dev/null 2>&1 || true
+fi
+
+if [ -e "$BACKUP" ] && [ ! -e "$FSTAB" ]; then
+    as_root mv "$BACKUP" "$FSTAB" || true
+fi
+
+exit "${status:-0}"

@@ -13,7 +13,7 @@ PRIORITY=100
 EOF
 
 cat > /etc/sysctl.d/90-deltaos-memory.conf <<'EOF'
-# Keep memory pressure manageable and allow modern games to map large assets.
+# Prefer compressed RAM over disk swap, and let modern games map large assets.
 vm.swappiness=100
 vm.dirty_ratio=20
 vm.dirty_background_ratio=5
@@ -27,6 +27,7 @@ options snd_hda_intel power_save=0 power_save_controller=N
 EOF
 
 mkdir -p /etc/skel/.config
+
 cat > /etc/skel/.config/deltaos.conf <<'EOF'
 [session]
 first_run=true
@@ -44,17 +45,51 @@ enabled=true
 backend=waydroid
 EOF
 
+# The theme is applied through plain KDE configuration files, so it survives
+# without a live desktop to script against. Color scheme, icon theme and fonts
+# all come from packages listed in packages/: Breeze Dark, Papirus Dark, Inter.
 cat > /etc/skel/.config/kdeglobals <<'EOF'
 [General]
 ColorScheme=BreezeDark
 font=Inter,10,-1,5,50,0,0,0,0,0
+fixed=JetBrains Mono,10,-1,5,50,0,0,0,0,0
+menuFont=Inter,10,-1,5,50,0,0,0,0,0
+toolBarFont=Inter,10,-1,5,50,0,0,0,0,0
+desktopFont=Inter,10,-1,5,50,0,0,0,0,0
+smallestReadableFont=Inter,8,-1,5,50,0,0,0,0,0
 
 [Icons]
 Theme=Papirus-Dark
 
 [KDE]
 SingleClick=false
+AnimationDurationFactor=80
 EOF
+
+# System-wide copy of the same defaults, so a user account created outside
+# Calamares still gets the DeltaOS look.
+mkdir -p /etc/xdg
+cp /etc/skel/.config/kdeglobals /etc/xdg/kdeglobals
+
+# File indexing is a well known source of background I/O on modest laptops.
+# Indexing stays available in System Settings; it is simply not on by default.
+cat > /etc/skel/.config/baloofilerc <<'EOF'
+[Basic Settings]
+Indexing-Enabled=false
+EOF
+
+# GTK applications (Firefox, LibreOffice, GIMP) should match the KDE theme
+# instead of falling back to an unstyled light look.
+for version in 3.0 4.0; do
+    mkdir -p "/etc/skel/.config/gtk-${version}"
+    cat > "/etc/skel/.config/gtk-${version}/settings.ini" <<'EOF'
+[Settings]
+gtk-theme-name=Breeze-Dark
+gtk-icon-theme-name=Papirus-Dark
+gtk-font-name=Inter 10
+gtk-application-prefer-dark-theme=1
+EOF
+done
 
 systemctl enable zramswap >/dev/null 2>&1 || true
 

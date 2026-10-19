@@ -44,5 +44,10 @@ else
     printf 'VERSION=0.1.0\nPROFILE=core\n' > /etc/deltaos/release
 fi
 
+# The apt lists are deliberately kept. live-build's binary stage still runs
+# Check_package for chroot tools (xorriso, isolinux, dctrl-tools, librsvg2-bin)
+# and installs anything missing with apt; deleting the lists here makes that
+# step fail long after the chroot work looked finished. live-build removes the
+# package cache itself and `--apt-indices false` is the supported way to drop
+# the lists if a smaller ISO is ever wanted.
 apt-get clean
-rm -rf /var/lib/apt/lists/*

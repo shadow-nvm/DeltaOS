@@ -1,5 +1,8 @@
 #!/bin/bash
-# Register the live desktop, installer entry, and DeltaHub first-run screen.
+# Register the live desktop, the installer entry, and the DeltaHub first-run
+# screen. Everything written here lands in the squashfs, which Calamares
+# unpacks for the installed system; runtime-only files are created by systemd
+# units that check for the live medium.
 set -e
 
 echo "==> DeltaOS: configuring the desktop session"
@@ -13,21 +16,23 @@ enable NetworkManager
 enable systemd-timesyncd
 enable power-profiles-daemon
 enable upower
+enable bluetooth
 
-# The live system logs in automatically. The service writes its SDDM setting
-# only when /run/live/medium exists. Calamares installs the read-only squashfs
-# contents, so this runtime-only setting is not copied into an installed OS.
+# ---------------------------------------------------------------------------
+# Live session: automatic login as the "live" user, and the installer entry
+# that only exists while booted from the live medium.
 mkdir -p /usr/share/deltaos /usr/lib/systemd/system
 cat > /usr/share/deltaos/sddm-live.conf <<'EOF'
 [Autologin]
 User=live
 Session=plasma.desktop
 EOF
+
 cat > /usr/lib/systemd/system/deltaos-live-autologin.service <<'EOF'
 [Unit]
 Description=Set up automatic login for the DeltaOS live session
 ConditionPathExists=/run/live/medium
-After=local-fs.target
+After=local-fs.target live-config.service
 Before=sddm.service
 
 [Service]
@@ -40,9 +45,56 @@ WantedBy=graphical.target
 EOF
 enable deltaos-live-autologin.service
 
-# Set a clear DeltaOS identity while preserving Debian compatibility metadata.
+# The installer menu entry ships at /usr/share/deltaos/deltaos-install.desktop
+# and is copied into /usr/share/applications by the live unit above, so an
+# installed system never shows an "Install DeltaOS" launcher. Its Exec target,
+# /usr/bin/deltaos-install, moves the live-build /etc/fstab out of the way and
+# grants the root installer access to the display, exactly like Debian's own
+# live installer wrapper.
+if [ -x /usr/bin/deltaos-install ]; then
+    chmod 0755 /usr/bin/deltaos-install /usr/bin/deltaos-layout 2>/dev/null || true
+fi
+
+# ---------------------------------------------------------------------------
+# The live system does not need /etc/fstab: live-boot and systemd mount
+# everything the session needs. Leaving the file behind makes Calamares show
+# the running live system's mounts as installation targets. Debian's own live
+# installer moves the file out of the way at launch; DeltaOS removes it from the
+# image and /usr/bin/deltaos-install still moves it aside if it reappears.
+rm -f /etc/fstab
+
+# ---------------------------------------------------------------------------
+# SDDM: pick a theme that actually exists in this image. Without an explicit
+# theme, a greeter with no theme installed shows no login screen at all.
+THEME=""
+for candidate in breeze debian-breeze debian-maui; do
+    if [ -d "/usr/share/sddm/themes/${candidate}" ]; then
+        THEME="${candidate}"
+        break
+    fi
+done
+if [ -z "${THEME}" ]; then
+    THEME="$(find /usr/share/sddm/themes -mindepth 1 -maxdepth 1 -type d -printf '%f\n' 2>/dev/null | head -n 1 || true)"
+fi
+mkdir -p /etc/sddm.conf.d
+{
+    echo "[General]"
+    echo "Numlock=on"
+    if [ -n "${THEME}" ]; then
+        echo
+        echo "[Theme]"
+        echo "Current=${THEME}"
+    fi
+} > /etc/sddm.conf.d/10-deltaos.conf
+echo "    SDDM theme: ${THEME:-none found}"
+
+# ---------------------------------------------------------------------------
+# Identity. Keep the Debian-compatible keys so packaging tools stay happy.
 DELTA_VERSION="$(sed -n 's/^VERSION=//p' /etc/deltaos/release 2>/dev/null | head -n 1)"
-DELTA_VERSION="${DELTA_VERSION:-0.1.0}"
+if [ -z "${DELTA_VERSION}" ]; then
+    DELTA_VERSION="$(sed -n 's/^VERSION=//p' /usr/share/deltaos/release 2>/dev/null | head -n 1)"
+fi
+DELTA_VERSION="${DELTA_VERSION:-0.2.0}"
 cat > /etc/os-release <<EOF
 NAME="DeltaOS"
 PRETTY_NAME="DeltaOS Aurora ${DELTA_VERSION}"
@@ -50,32 +102,30 @@ ID=deltaos
 ID_LIKE=debian
 VERSION_ID="${DELTA_VERSION}"
 VERSION_CODENAME=trixie
+ANSI_COLOR="0;36"
 EOF
 
-# Calamares is shown in the application menu only during a live session. The
-# runtime service adds this entry to the writable live overlay, so it is not
-# left behind in the installed system.
-cat > /usr/share/deltaos/deltaos-install.desktop <<'EOF'
-[Desktop Entry]
-Type=Application
-Version=1.0
-Name=Install DeltaOS
-Comment=Install DeltaOS to this computer
-Exec=pkexec /usr/bin/calamares -d
-Icon=calamares
-Terminal=false
-Categories=System;Settings;
-StartupNotify=true
-EOF
+# Wallpaper package, so the DeltaOS wallpapers also appear in System Settings.
+WALLPAPER_DIR=/usr/share/wallpapers/DeltaOS/contents/images
+mkdir -p "${WALLPAPER_DIR}"
+if [ -f /usr/share/deltaos/artwork/wallpaper-dark.jpg ]; then
+    cp -f /usr/share/deltaos/artwork/wallpaper-dark.jpg "${WALLPAPER_DIR}/3840x2160.jpg"
+fi
+if [ -f /usr/share/deltaos/artwork/wallpaper-aurora.jpg ]; then
+    mkdir -p /usr/share/wallpapers/DeltaOS-aurora/contents/images
+    cp -f /usr/share/deltaos/artwork/wallpaper-aurora.jpg \
+        /usr/share/wallpapers/DeltaOS-aurora/contents/images/2560x1440.jpg
+fi
 
-# Install the DeltaOS branding files where Calamares expects them.
+# ---------------------------------------------------------------------------
+# Calamares branding lives where the installer looks for it.
 if [ -d /usr/share/deltaos/calamares-branding ]; then
     mkdir -p /etc/calamares/branding/deltaos
     cp -a /usr/share/deltaos/calamares-branding/. /etc/calamares/branding/deltaos/
 fi
 
-# One first-run entry per new account prevents two welcome windows opening at
-# the same time. The same flow exposes the installer only during a live boot.
+# One first-run entry per new account keeps a single welcome window. The same
+# flow exposes the installer only during a live boot.
 if [ -f /usr/bin/deltahub ]; then
     chmod 0755 /usr/bin/deltahub
     mkdir -p /etc/skel/.config/autostart
@@ -92,8 +142,16 @@ X-GNOME-Autostart-enabled=true
 EOF
 fi
 
+# ---------------------------------------------------------------------------
+# Boot splash and desktop caches.
 if command -v plymouth-set-default-theme >/dev/null 2>&1; then
     plymouth-set-default-theme deltaos -R || true
+fi
+if command -v gtk-update-icon-cache >/dev/null 2>&1; then
+    gtk-update-icon-cache -f -t /usr/share/icons/hicolor >/dev/null 2>&1 || true
+fi
+if command -v update-desktop-database >/dev/null 2>&1; then
+    update-desktop-database /usr/share/applications >/dev/null 2>&1 || true
 fi
 
 echo "==> DeltaOS: desktop is configured"

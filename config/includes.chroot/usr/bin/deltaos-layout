@@ -1,0 +1,101 @@
+#!/bin/sh
+# Optional DeltaOS desktop layout manager.
+#
+#   deltaos-layout dock     a single floating bottom dock (Windows 11 / macOS
+#                           style: launcher, running windows, tray, clock)
+#   deltaos-layout reset    back to the stock Plasma panel layout
+#   deltaos-layout status   list the current panels
+#
+# The layout is applied through the Plasma desktop scripting API, which is the
+# supported way to change a running shell. It is deliberately opt-in: a broken
+# layout script must never be the first thing a new user sees, so the stock
+# Plasma panel stays in place until somebody asks for the dock.
+#
+# Safety: the dock is created first and the old panels are removed afterwards.
+# If any step fails, the previous layout is still on screen.
+set -u
+
+call_plasmashell() {
+    busctl --user call org.kde.plasmashell /PlasmaShell \
+        org.kde.PlasmaShell evaluateScript s "$1" 2>/dev/null
+}
+
+DOCK_SCRIPT=$(cat <<'JAVASCRIPT'
+var existing = panels();
+var bar = new Panel("org.kde.panel");
+bar.location = "bottom";
+bar.height = 54;
+bar.addWidget("org.kde.plasma.kickoff");
+bar.addWidget("org.kde.plasma.icontasks");
+bar.addWidget("org.kde.plasma.marginsseparator");
+bar.addWidget("org.kde.plasma.systemtray");
+bar.addWidget("org.kde.plasma.digitalclock");
+bar.addWidget("org.kde.plasma.showdesktop");
+// Only now remove what was there before; a failure above leaves it in place.
+try {
+    for (var i = 0; i < existing.length; i++) {
+        existing[i].remove();
+    }
+} catch (error) {
+    print("deltaos-layout: could not remove the old panel: " + error);
+}
+JAVASCRIPT
+)
+
+STATUS_SCRIPT=$(cat <<'JAVASCRIPT'
+var all = panels();
+var out = [];
+for (var i = 0; i < all.length; i++) {
+    out.push(i + ": " + all[i].location + " (" + all[i].height + "px)");
+}
+print(out.join("\n"));
+JAVASCRIPT
+)
+
+reset_layout() {
+    config="${XDG_CONFIG_HOME:-$HOME/.config}/plasma-org.kde.plasma.desktop-appletsrc"
+    if [ -e "$config" ]; then
+        mv "$config" "$config.deltaos-backup" || return 1
+        echo "Moved the existing layout to $(basename "$config").deltaos-backup"
+    fi
+    if systemctl --user restart plasma-plasmashell.service 2>/dev/null; then
+        echo "Plasma restarted with its default layout."
+        return 0
+    fi
+    # Older Plasma releases had no user service for the shell.
+    if command -v plasmashell >/dev/null 2>&1; then
+        (plasmashell --replace >/dev/null 2>&1 &) || true
+        echo "Requested a Plasma restart with its default layout."
+        return 0
+    fi
+    echo "Could not restart Plasma; log out and back in to get the default layout." >&2
+    return 1
+}
+
+case "${1:-status}" in
+    dock)
+        if ! command -v busctl >/dev/null 2>&1; then
+            echo "deltaos-layout: busctl is missing (systemd is required)" >&2
+            exit 1
+        fi
+        if ! call_plasmashell "$DOCK_SCRIPT" >/dev/null; then
+            echo "deltaos-layout: the Plasma shell did not accept the layout script." >&2
+            echo "Your current desktop layout was left untouched." >&2
+            exit 1
+        fi
+        echo "Applied the DeltaOS dock layout."
+        ;;
+    reset)
+        reset_layout
+        ;;
+    status)
+        call_plasmashell "$STATUS_SCRIPT" || {
+            echo "deltaos-layout: could not reach the Plasma shell" >&2
+            exit 1
+        }
+        ;;
+    *)
+        echo "usage: deltaos-layout [dock|reset|status]" >&2
+        exit 2
+        ;;
+esac

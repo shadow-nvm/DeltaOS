@@ -1,11 +1,11 @@
 # Android app support.
 # Waydroid runs a real Android system image in a container on the host kernel,
-# so it needs binder support (binder_linux) and a Wayland session. The setup
-# script checks both and refuses cleanly instead of corrupting the session.
-# waydroid ships only in trixie-backports/main; the android hook installs it
+# so it needs binder support (binder_linux) and a Wayland session. DeltaHub
+# checks both and refuses cleanly instead of corrupting the session.
+# waydroid ships only in trixie-backports/main; the backports hook installs it
 # with `apt-get install -t trixie-backports` and configures binder_linux.
 ^waydroid
-# Optional companion tools
-?waydroid-image-gapps
+# Optional companion tools. Waydroid downloads its own Android system image on
+# first use, so no image package is listed here.
 ?weston
-?adbd
+?android-sdk-platform-tools-common

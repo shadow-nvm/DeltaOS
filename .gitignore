@@ -2,4 +2,5 @@
 .freebuff/
 build/work/
 build/output/
-tools/__pycache__/
+__pycache__/
+*.pyc

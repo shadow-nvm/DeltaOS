@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=Install DeltaOS
+Comment=Install DeltaOS to this computer
+Exec=/usr/bin/deltaos-install
+Icon=calamares
+Terminal=false
+Categories=System;Settings;
+StartupNotify=true

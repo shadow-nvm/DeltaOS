@@ -1,7 +1,16 @@
+/* DeltaOS installer slideshow.
+ *
+ * Structure copied from Debian's own live installer slideshow, which is known
+ * to load with the Calamares version shipped in Debian 13 (slideshowAPI 2):
+ * one Presentation, a repeating Timer, and Slides holding explicitly sized
+ * items. Fixed sizes matter: a Slide is a bare Item, so child items that only
+ * anchor to the parent would collapse when the presentation resizes itself.
+ */
 import QtQuick 2.0;
 import calamares.slideshow 1.0;
 
-Presentation {
+Presentation
+{
     id: presentation
 
     Timer {
@@ -11,89 +20,50 @@ Presentation {
     }
 
     Slide {
-        Rectangle {
-            anchors.fill: parent
-            radius: 14
-            color: "#111a31"
-        }
-        Column {
+        Image {
+            id: welcomeImage
+            source: "deltaos-welcome.png"
+            width: 467; height: 146
+            fillMode: Image.PreserveAspectFit
             anchors.centerIn: parent
-            width: parent.width * 0.78
-            spacing: 18
-            Text {
-                text: "Welcome to DeltaOS"
-                color: "#f2f5ff"
-                font.pixelSize: 28
-                font.bold: true
-                horizontalAlignment: Text.AlignHCenter
-                width: parent.width
-            }
-            Text {
-                text: "A clear, capable desktop for study, games, and everyday work."
-                color: "#b7c5e4"
-                font.pixelSize: 18
-                wrapMode: Text.WordWrap
-                horizontalAlignment: Text.AlignHCenter
-                width: parent.width
-            }
+        }
+        Text {
+            anchors.horizontalCenter: welcomeImage.horizontalCenter
+            anchors.top: welcomeImage.bottom
+            anchors.topMargin: 18
+            width: 520
+            text: qsTr("Welcome to DeltaOS.<br/>" +
+                       "The rest of the installation runs automatically and should finish in a few minutes.")
+            color: "#dce5ff"
+            font.pixelSize: 16
+            wrapMode: Text.WordWrap
+            horizontalAlignment: Text.AlignHCenter
         }
     }
 
     Slide {
-        Rectangle {
-            anchors.fill: parent
-            radius: 14
-            color: "#111a31"
-        }
-        Column {
+        Text {
             anchors.centerIn: parent
-            width: parent.width * 0.78
-            spacing: 18
-            Text {
-                text: "Made for your everyday work"
-                color: "#f2f5ff"
-                font.pixelSize: 28
-                font.bold: true
-                horizontalAlignment: Text.AlignHCenter
-                width: parent.width
-            }
-            Text {
-                text: "Use Firefox, LibreOffice, KDE apps, and a growing collection of open-source tools."
-                color: "#b7c5e4"
-                font.pixelSize: 18
-                wrapMode: Text.WordWrap
-                horizontalAlignment: Text.AlignHCenter
-                width: parent.width
-            }
+            width: 540
+            text: qsTr("One desktop for study, work and play.<br/><br/>" +
+                       "Firefox, LibreOffice, KDE applications and the DeltaOS hub are ready after the first boot.")
+            color: "#dce5ff"
+            font.pixelSize: 18
+            wrapMode: Text.WordWrap
+            horizontalAlignment: Text.AlignHCenter
         }
     }
 
     Slide {
-        Rectangle {
-            anchors.fill: parent
-            radius: 14
-            color: "#111a31"
-        }
-        Column {
+        Text {
             anchors.centerIn: parent
-            width: parent.width * 0.78
-            spacing: 18
-            Text {
-                text: "Try games and more apps"
-                color: "#f2f5ff"
-                font.pixelSize: 28
-                font.bold: true
-                horizontalAlignment: Text.AlignHCenter
-                width: parent.width
-            }
-            Text {
-                text: "Steam, Lutris, Wine, and optional Waydroid support help you explore more software. Compatibility depends on each app and your hardware."
-                color: "#b7c5e4"
-                font.pixelSize: 18
-                wrapMode: Text.WordWrap
-                horizontalAlignment: Text.AlignHCenter
-                width: parent.width
-            }
+            width: 540
+            text: qsTr("Windows and Android applications.<br/><br/>" +
+                       "Wine runs many Windows programs and Waydroid can run Android apps when your hardware supports it. Compatibility depends on the application.")
+            color: "#dce5ff"
+            font.pixelSize: 18
+            wrapMode: Text.WordWrap
+            horizontalAlignment: Text.AlignHCenter
         }
     }
 }

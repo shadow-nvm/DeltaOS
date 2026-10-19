@@ -27,10 +27,18 @@ Write-Host 'Building the DeltaOS ISO builder image...'
 & docker build --tag deltaos-builder (Join-Path $repo 'build')
 if ($LASTEXITCODE -ne 0) { throw 'Could not build the DeltaOS builder image.' }
 
+# build/work is a Docker volume rather than a bind mount: Docker Desktop cannot
+# carry the ownership, permissions and device nodes a Debian chroot needs on a
+# Windows filesystem. Only the finished ISO is written back to the repository.
+# The same volume name is used by build/docker-build.sh, so both wrappers reuse
+# one build tree.
+$volume = 'deltaos-build-work'
+& docker volume create $volume | Out-Null
+
 $dockerArgs = @(
     'run', '--rm', '--privileged',
     '--volume', "${repo}:/work",
-    '--volume', 'deltaos-deltaos-build-work:/work/build/work',
+    '--volume', "${volume}:/work/build/work",
     '--workdir', '/work',
     'deltaos-builder',
     'bash', './build/build-iso.sh', $DeltaProfile
@@ -44,7 +52,7 @@ if ($LASTEXITCODE -ne 0) {
     Write-Host 'Recent build log output:'
     $logArgs = @(
         'run', '--rm',
-        '--volume', 'deltaos-deltaos-build-work:/work/build/work',
+        '--volume', "${volume}:/work/build/work",
         '--entrypoint', 'sh', 'deltaos-builder', '-lc',
         'if [ -f /work/build/work/build.log ]; then tail -n 80 /work/build/work/build.log; else echo "No build log was created."; fi'
     )

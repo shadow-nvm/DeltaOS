@@ -3,6 +3,9 @@
 live-boot
 live-config
 live-config-systemd
+# Creates the automatic "live" account for the live session; without it the
+# desktop has nobody to log in as.
+user-setup
 squashfs-tools
 file
 less
@@ -36,13 +39,26 @@ e2fsprogs
 python3
 efibootmgr
 os-prober
+# Bootloader tooling. live-build's binary stage checks for these in the chroot
+# and would otherwise try to apt-install them after the chroot is finished;
+# a build must not depend on that late network step.
+grub-common
 grub2-common
 grub-efi-amd64-bin
 grub-pc-bin
-# live-build's iso-hybrid step needs the isohybrid MBR from this package.
-# Keeping it in the image avoids live-build apt-installing it after the
-# package lists have already been cleaned.
+# Signed GRUB + shim make the ISO bootable with UEFI Secure Boot enabled and
+# let the installer register a Secure Boot capable bootloader on the target.
+grub-efi-amd64-signed
+shim-signed
+# live-build's iso-hybrid step needs the El Torito/isohybrid binaries from
+# isolinux and xorriso inside the chroot.
 isolinux
+xorriso
+# live-build uses dctrl-tools to build the binary package index and
+# librsvg2-bin to render the boot splash; both are checked in the chroot.
+dctrl-tools
+librsvg2-bin
+initramfs-tools
 network-manager
 wpasupplicant
 rfkill
@@ -61,6 +77,7 @@ fonts-dejavu-core
 papirus-icon-theme
 breeze
 breeze-gtk-theme
+libqt6svg6
 qt6-wayland
 xdg-utils
 xdg-desktop-portal
@@ -88,7 +105,6 @@ intel-microcode
 amd64-microcode
 # Nice-to-have command line polish
 ?fastfetch
-?neofetch
 ?btop
 ?tmux
 ?tree
@@ -98,3 +114,5 @@ amd64-microcode
 ?zoxide
 ?git
 ?openssh-client
+?python3-pyqt6.qtsvg
+?modemmanager

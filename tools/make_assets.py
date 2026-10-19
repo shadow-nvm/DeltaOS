@@ -211,7 +211,7 @@ def make_grub_background(w: int = 1920, h: int = 1080) -> Image.Image:
     return img.convert("RGB")
 
 
-def make_welcome(w: int = 1600, h: int = 500) -> Image.Image:
+def make_welcome(w: int = 1600, h: int = 500, version: str = "0.2.0") -> Image.Image:
     """Calamares welcome banner: mark, wordmark, tagline."""
     bg = mesh(w, h, c_tl=(8, 12, 26), c_br=(16, 22, 54),
               glows=[(0.14, 0.80, 0.65, TEAL, 0.45),
@@ -229,7 +229,7 @@ def make_welcome(w: int = 1600, h: int = 500) -> Image.Image:
     title = find_font(int(h * 0.20), bold=True)
     sub = find_font(int(h * 0.062))
     d.text((tx, h * 0.40), "DeltaOS", font=title, fill=WHITE, anchor="lm")
-    d.text((tx, h * 0.62), "Aurora 0.1  \u2014  fast, beautiful, yours",
+    d.text((tx, h * 0.62), f"Aurora {version}  \u2014  fast, beautiful, yours",
            font=sub, fill=MUTED, anchor="lm")
     return img.convert("RGB")
 
@@ -339,7 +339,16 @@ def main() -> int:
                     help="live-build includes.chroot tree to write into")
     ap.add_argument("--binary", default="config/includes.binary",
                     help="live-build includes.binary tree (ISO-level GRUB theme)")
+    ap.add_argument("--version", default=None,
+                    help="version printed on the installer banner (default: VERSION file)")
     args = ap.parse_args()
+    version = args.version
+    if not version:
+        version_file = Path(__file__).resolve().parent.parent / "VERSION"
+        try:
+            version = version_file.read_text(encoding="utf-8").strip() or "0.2.0"
+        except OSError:
+            version = "0.2.0"
     root = Path(args.out)
     binary = Path(args.binary)
 
@@ -362,7 +371,7 @@ def main() -> int:
     save(make_wallpaper(2560, 1440), art / "wallpaper-aurora.jpg")
     save(make_grub_background(), art / "grub-background.png")
 
-    save(make_welcome(), brand / "deltaos-welcome.png")
+    save(make_welcome(version=version), brand / "deltaos-welcome.png")
     save(make_icon(512), brand / "deltaos-logo.png")
     save(make_splash_logo(512), ply / "deltaos-logo.png")
 

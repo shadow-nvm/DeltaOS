@@ -12,10 +12,16 @@ kscreen
 kwin-wayland
 kwin-x11
 sddm
+# A theme must be installed explicitly: with --apt-recommends false nothing
+# else pulls one, and sddm without a theme shows no login screen.
+sddm-theme-breeze
 python3-pyqt6
 pkexec
 polkit-kde-agent-1
 xserver-xorg
+# The X11 session needs an input driver; with --apt-recommends false nothing
+# else pulls it, and an X server without libinput has no keyboard or mouse.
+xserver-xorg-input-libinput
 kde-config-gtk-style
 kde-config-screenlocker
 kde-style-breeze
@@ -34,11 +40,16 @@ partitionmanager
 kinfocenter
 kmenuedit
 # Optional extras: present in trixie today, dropped automatically if renamed.
-?plasma-workspace-wayland
+?plasma-widgets-addons
+?kde-cli-tools
+?kwin-addons
+?qt6-image-formats-plugins
+?xdg-desktop-portal-gtk
+?kde-config-plymouth
+?kde-config-cron
 ?plasma-discover-backend-flatpak
 ?kdeconnect
 ?ksystemlog
-?sddm-theme-breeze
 ?libpam-kwallet5
 ?libpam-kwallet-common
 ?kwalletmanager
@@ -51,3 +62,4 @@ kmenuedit
 ?ffmpegthumbs
 ?kdegraphics-thumbnailers
 ?plasma-workspace-wallpapers
+?sound-theme-freedesktop

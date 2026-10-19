@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import configparser
 import platform
+import shlex
 import shutil
 import subprocess
 import sys
@@ -55,13 +56,17 @@ def command_exists(name: str) -> bool:
 
 
 def deltaos_version() -> str:
-    try:
-        for line in Path("/etc/deltaos/release").read_text(encoding="utf-8").splitlines():
-            if line.startswith("VERSION="):
-                return line.partition("=")[2].strip()
-    except OSError:
-        pass
-    return read_os_release().get("VERSION_ID", "0.1.0")
+    # The build writes /usr/share/deltaos/release; the live hook copies it to
+    # /etc/deltaos/release. Read both so the hub also works on a partially
+    # assembled image.
+    for path in ("/etc/deltaos/release", "/usr/share/deltaos/release"):
+        try:
+            for line in Path(path).read_text(encoding="utf-8").splitlines():
+                if line.startswith("VERSION="):
+                    return line.partition("=")[2].strip()
+        except OSError:
+            continue
+    return read_os_release().get("VERSION_ID", "0.2.0")
 
 
 def start_program(name: str, arguments: list[str] | None = None,
@@ -166,7 +171,9 @@ class WelcomeDialog(QDialog):
         layout.addWidget(hint)
 
     def start_installer(self) -> None:
-        if start_program("pkexec", ["/usr/bin/calamares", "-d"], self):
+        # deltaos-install handles the live-session details (stale fstab, xhost
+        # for the root installer, pkexec) that Calamares needs on a live boot.
+        if start_program("deltaos-install", [], self):
             self.reject()
 
 
@@ -295,6 +302,15 @@ class DeltaHub(QMainWindow):
                 self.status_labels[key] = value
                 grid.addWidget(card)
             layout.addLayout(grid)
+            if IS_LIVE:
+                self.add_action_card(
+                    layout, "Install DeltaOS on this computer",
+                    "Keep exploring the live desktop first, or install DeltaOS to "
+                    "the internal disk. The installer can shrink or replace "
+                    "partitions and lets you choose the target disk.",
+                    [("Install DeltaOS", self.open_installer)],
+                    "Changing partitions can erase the selected disk. Back up "
+                    "important files before you continue.")
             self.add_action_card(layout, "Start with a task", "Jump straight into common DeltaOS tools.", [
                 ("Open Software", lambda: self.show_page(4)),
                 ("System Settings", lambda: start_program("systemsettings", parent=self)),
@@ -380,6 +396,16 @@ class DeltaHub(QMainWindow):
             self.add_action_card(layout, "More settings", "Adjust display, network, sound, power, and desktop behavior.", [
                 ("Open System Settings", lambda: start_program("systemsettings", parent=self)),
             ])
+            self.add_action_card(
+                layout, "DeltaOS dock layout",
+                "Use one floating dock for the launcher, open windows, the system "
+                "tray and the clock. The stock Plasma panel is replaced only "
+                "after the dock has been created, so the current layout stays if "
+                "anything fails.",
+                [("Apply dock layout", self.apply_dock_layout),
+                 ("Restore default layout", self.reset_layout)],
+                "Both actions need an active Plasma session and can be undone "
+                "with 'Restore default layout'.")
             return widget
 
         widget, layout = self.page("About DeltaOS", "DeltaOS is a Debian-based Linux distribution using the KDE Plasma desktop.")
@@ -565,6 +591,37 @@ class DeltaHub(QMainWindow):
             return
         start_program("plasma-apply-wallpaperimage", [str(image)], self)
 
+    def open_installer(self) -> None:
+        if not IS_LIVE:
+            QMessageBox.information(
+                self, APP_NAME,
+                "The installer is only available in a live session. DeltaOS is already installed.")
+            return
+        start_program("deltaos-install", [], self)
+
+    def apply_dock_layout(self) -> None:
+        if not command_exists("deltaos-layout"):
+            QMessageBox.information(self, APP_NAME,
+                                    "The layout helper is missing from this image.")
+            return
+        if not start_program("deltaos-layout", ["dock"], self):
+            return
+        QMessageBox.information(
+            self, APP_NAME,
+            "The DeltaOS dock layout is being applied. Use 'Restore default "
+            "layout' if you prefer the standard Plasma panel.")
+
+    def reset_layout(self) -> None:
+        answer = QMessageBox.question(
+            self, "Restore the default layout?",
+            "This replaces the current panel layout with Plasma's default. "
+            "A backup of the existing configuration is kept. Continue?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No)
+        if answer != QMessageBox.StandardButton.Yes or not command_exists("deltaos-layout"):
+            return
+        start_program("deltaos-layout", ["reset"], self)
+
 
 def apply_first_run_defaults() -> None:
     defaults = Path("/etc/skel/.config/kdeglobals")
@@ -574,7 +631,13 @@ def apply_first_run_defaults() -> None:
         shutil.copy2(defaults, user_settings)
     wallpaper = ARTWORK / "wallpaper-aurora.jpg"
     if wallpaper.is_file() and command_exists("plasma-apply-wallpaperimage"):
-        subprocess.Popen(["plasma-apply-wallpaperimage", str(wallpaper)],
+        # This runs from an XDG autostart entry while plasmashell is still
+        # starting, so give the shell a few seconds before asking it to change
+        # the wallpaper. Failing to set it is harmless: the same wallpapers are
+        # installed in System Settings.
+        command = ("sleep 8; exec plasma-apply-wallpaperimage "
+                   + shlex.quote(str(wallpaper)))
+        subprocess.Popen(["sh", "-c", command],
                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     config = config_file()
     if not config.has_section("session"):

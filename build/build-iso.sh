@@ -25,7 +25,7 @@ for arg in "$@"; do
     esac
 done
 
-VERSION="$(tr -d ' \r\n\t' < "$REPO/VERSION")"
+VERSION="$(tr -d '\357\273\277 \r\n\t' < "$REPO/VERSION")"
 [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][A-Za-z0-9.-]+)?$ ]] || {
     echo "ERROR: VERSION must contain a version such as 0.1.0" >&2
     exit 2
@@ -43,6 +43,8 @@ die() { printf '\033[1;31mERROR: %s\033[0m\n' "$*" >&2; exit 1; }
 for tool in lb debootstrap python3 mksquashfs xorriso; do
     command -v "$tool" >/dev/null 2>&1 || die "missing $tool (install live-build debootstrap squashfs-tools xorriso python3-pil)"
 done
+python3 -c 'import PIL' 2>/dev/null || \
+    die "Python Pillow is missing; the DeltaOS artwork cannot be generated (install python3-pil)"
 
 if [[ "$CLEAN" -eq 1 ]]; then
     log "cleaning the previous build tree"
@@ -130,7 +132,11 @@ python3 "$REPO/tools/make_assets.py" \
 log "staging the optional GRUB theme"
 bash "$REPO/build/apply-grub-theme.sh" "$WORK"
 
-log "building the ISO; allow about 12 GB of free disk space"
+# live-build's binary stage checks for xorriso, isolinux, dctrl-tools and
+# librsvg2-bin inside the chroot. They are listed in packages/00-base.list so
+# the stage never needs a late network install; apt indices are kept as well
+# (see config/hooks/live/10-deltaos-backports.hook.chroot).
+log "building the ISO; allow about 20 GB of free disk space"
 lb build 2>&1 | tee "$WORK/build.log"
 
 ISO_BUILT="$(find "$WORK" -maxdepth 1 -type f -name "${IMAGE}-amd64*.iso" -print -quit)"
