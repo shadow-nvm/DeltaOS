@@ -76,14 +76,51 @@ If the display is blank or unstable, turn off 3D acceleration in the VM settings
 
 Use a spare USB drive of at least 16 GB. Writing the image erases the selected USB drive. In Rufus or balenaEtcher, select the DeltaOS ISO and the correct USB device. If Rufus asks whether to write in ISO or DD mode, choose **DD image mode** for the hybrid live image. Wait for the write to finish, safely eject the USB, then use the computer's one-time boot menu to select it. The boot-menu key varies by manufacturer (often F12, F9, Esc, or Del).
 
-Choose the live entry to try DeltaOS without installing it. By default, the live session is not persistent: files and settings created during that session disappear after shutdown. To install, choose **Install DeltaOS** in the welcome window or application menu and carefully select the destination drive. Confirming partition changes can erase data on the selected drive; back up important files first.
+Choose the live entry to try DeltaOS without installing it. Unless a persistence volume is set up (next section), the live session is not persistent: files and settings created during that session disappear after shutdown. To install, choose **Install DeltaOS** in the welcome window or application menu and carefully select the destination drive. Confirming partition changes can erase data on the selected drive; back up important files first.
 
 Debian's live manual describes the hybrid ISO and raw USB writing approach: <https://live-team.pages.debian.net/live-manual/html/live-manual.en.html>.
+
+## Make the live USB persistent
+
+Persistence keeps files, settings and packages installed in a live session across reboots. DeltaOS uses the mechanism Debian live-boot documents: a disk volume **labelled `persistence`** that contains a `persistence.conf` file with the single entry `/ union`. The live boot line already includes the `persistence` parameter, so such a volume is picked up on the next boot; without one the session behaves exactly as before, and `nopersistence` on the kernel command line turns saving off for one boot.
+
+The helper that creates and checks the volume ships in the image:
+
+```bash
+sudo deltaos-persistence --status        # is this session persistent?
+sudo deltaos-persistence --check /dev/sdX   # describe a stick, change nothing
+sudo deltaos-persistence --wizard        # choose a removable disk interactively
+sudo deltaos-persistence --make /dev/sdX    # add the volume to a USB stick
+sudo deltaos-persistence --format /dev/sdX2 # use an existing partition
+```
+
+`--make` adds **one new partition in the free space after the DeltaOS image**, leaves existing partitions alone, formats that partition ext4, labels it `persistence` and writes `/ union` into `persistence.conf`. It refuses a disk that holds the running root filesystem or has mounted partitions, only creates a fresh partition table when the stick has none, and asks before anything is written.
+
+A running live session cannot re-read the partition table of the stick it booted from, so the helper refuses to modify the booted stick. Use one of these two routes instead:
+
+1. **Prepare the stick while it is not booted (same stick).** Write the ISO, then run the helper from an installed DeltaOS, another Linux system, or macOS/Linux with a USB card reader before booting it:
+
+   ```bash
+   sudo deltaos-persistence --make /dev/sdX
+   ```
+
+   On Windows this is the one step that needs Linux: either prepare the stick from a Linux machine or from WSL2 with the stick passed through (`usbipd-win`), or use the second-stick route below.
+
+2. **Use a second USB stick from the live session.** Boot DeltaOS from the first stick, plug in a spare USB stick of at least 2 GB, and run `sudo deltaos-persistence --wizard`. live-boot searches every disk for the volume, so the spare stick holds the changes and both sticks are needed at boot.
+
+DeltaHub shows the persistence status on its Overview page in a live session. After a reboot, `deltaos-persistence --status` should report the volume that is in use.
+
+Things to know:
+
+- Rewriting the ISO to the stick erases the persistence partition. Re-create it after flashing a new image; a reinstall or update does not migrate it.
+- The volume is **not encrypted**. Anyone who has the stick can read the files on it.
+- The overlay grows with every change and installed package. Watch free space with `df -h /`; an empty or full volume can also be recreated with `--format`.
+- Do not unplug the stick while the session is running; writes to the volume will fail and the session may become unstable.
 
 ## Current development limits
 
 - Only amd64/x86-64 is configured. ARM PCs are not supported by this image.
-- No live-USB persistence, encryption flow, rollback system, DeltaOS update service, or signed DeltaOS package repository is configured yet.
+- Live-USB persistence exists but is opt-in and unencrypted; there is no encryption flow, rollback system, DeltaOS update service, or signed DeltaOS package repository yet.
 - Secure Boot, virtual machines, graphics, wireless devices, suspend, and the installer still need real boot/install testing on target hardware.
 - Windows and Android compatibility layers provide compatibility, not a guarantee that every app or game works.
 - The build helper downloads Debian packages. Review package sources and license obligations before distributing an image publicly; Debian's archive areas include firmware and other non-free packages.
@@ -99,7 +136,9 @@ Debian's live manual describes the hybrid ISO and raw USB writing approach: <htt
 - `tools/pkgcheck.py` — checks package names against Debian archive indexes (including the i386 subset used by Steam and Wine) and emits live-build package lists.
 - `tools/make_assets.py` — prepares DeltaOS artwork for the live image.
 - `tools/selfcheck.py` — offline check of the YAML, branding, theme assets and package lists.
+- `config/includes.chroot/usr/bin/deltaos-persistence` — creates, checks and reports the live persistence volume.
 - `tools/smoke_test_deltahub.py` — headless PyQt6 test that builds every DeltaHub page.
+- `tools/test_persistence.py` — unit tests for partition planning and persistence detection.
 
 ## Check the tree before a long build
 

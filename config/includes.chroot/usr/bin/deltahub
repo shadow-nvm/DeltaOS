@@ -299,6 +299,16 @@ class DeltaHub(QMainWindow):
                 ("Open Software", lambda: self.show_page(4)),
                 ("System Settings", lambda: start_program("systemsettings", parent=self)),
             ])
+            if IS_LIVE:
+                self.add_action_card(
+                    layout, "Live session storage",
+                    self.command_output(["/usr/bin/deltaos-persistence", "--brief"])
+                    + " A persistence volume keeps files, settings and installed "
+                      "packages on a USB stick after shutdown.",
+                    [("Set up persistence", self.open_persistence_setup)],
+                    "The live system cannot repartition the stick it booted from: "
+                    "use a second USB stick, or prepare the stick from an "
+                    "installed DeltaOS or another Linux system.")
             self.refresh_overview()
             return widget
 
@@ -435,6 +445,15 @@ class DeltaHub(QMainWindow):
         gpu_line = next((line.split(":", 2)[-1].strip() for line in gpu.splitlines()
                          if "vga" in line.lower() or "3d controller" in line.lower()), "See System Settings")
         self.status_labels["graphics"].setText(gpu_line[:96])
+
+    def open_persistence_setup(self) -> None:
+        if not command_exists("konsole"):
+            QMessageBox.information(
+                self, APP_NAME,
+                "Open a terminal and run: sudo deltaos-persistence --wizard")
+            return
+        start_program("konsole", ["-e", "/usr/bin/deltaos-persistence", "--wizard"],
+                      self)
 
     def run_windows_app(self) -> None:
         if not command_exists("wine"):

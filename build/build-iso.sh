@@ -52,6 +52,9 @@ fi
 mkdir -p "$WORK" "$OUT"
 cd "$WORK"
 
+# "persistence" tells live-boot to look for a disk volume labelled
+# "persistence" holding a persistence.conf file (see deltaos-persistence).
+# Without such a volume the session stays read-only, exactly as before.
 log "configuring the Debian 13 live image ($PROFILE profile)"
 lb config \
     --distribution trixie \
@@ -69,7 +72,7 @@ lb config \
     --iso-publisher "DeltaOS Project" \
     --iso-volume "DELTAOS" \
     --image-name "$IMAGE" \
-    --bootappend-live "boot=live components quiet splash hostname=deltaos username=live locales=en_US.UTF-8 keyboard-layouts=us" \
+    --bootappend-live "boot=live components quiet splash persistence hostname=deltaos username=live locales=en_US.UTF-8 keyboard-layouts=us" \
     --bootappend-live-failsafe "boot=live components memtest noapic noapm nodma nomce nolapic nomodeset nosmp nosplash vga=normal" \
     --linux-flavours amd64 \
     --apt-options "--yes --option Acquire::Retries=5" \

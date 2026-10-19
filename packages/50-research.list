@@ -1,7 +1,8 @@
 # Student + research tooling. Most of this is optional because the heavyweight
 # scientific stack adds ~1.5 GB; `--profile full` keeps it, `--profile core`
 # drops it and DeltaHub can install it later.
-python3
+# python3 itself is part of the base image (DeltaHub and deltaos-persistence
+# import it), so it is listed in 00-base.list rather than here.
 python3-pip
 python3-venv
 python3-numpy

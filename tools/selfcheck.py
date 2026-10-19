@@ -168,6 +168,44 @@ def check_packages() -> None:
     ok(f"validated {total} package entries across the lists")
 
 
+def check_persistence() -> None:
+    script = INCLUDES / "usr/bin/deltaos-persistence"
+    if not script.is_file():
+        fail("live persistence helper is missing: "
+             "config/includes.chroot/usr/bin/deltaos-persistence")
+        return
+    source = script.read_text(encoding="utf-8")
+    if not source.startswith("#!"):
+        fail("deltaos-persistence has no shebang")
+    try:
+        compile(source, str(script), "exec")
+    except SyntaxError as exc:
+        fail(f"deltaos-persistence does not compile: {exc}")
+        return
+    if "/ union" not in source:
+        fail("deltaos-persistence does not write the '/ union' persistence.conf entry")
+
+    build = (ROOT / "build/build-iso.sh").read_text(encoding="utf-8")
+    match = re.search(r'--bootappend-live "([^"]*)"', build)
+    if not match:
+        fail("build/build-iso.sh has no --bootappend-live line")
+    else:
+        tokens = match.group(1).split()
+        if "boot=live" not in tokens:
+            fail("the live boot line lacks boot=live, so live-boot never activates")
+        if "persistence" not in tokens:
+            fail("the live boot line does not request persistence")
+        if "nopersistence" in tokens:
+            fail("the live boot line disables persistence with nopersistence")
+
+    base = (ROOT / "packages/00-base.list").read_text().splitlines()
+    present = {line.split("#", 1)[0].strip().lstrip("?!^") for line in base}
+    for package in ("python3", "e2fsprogs"):
+        if package not in present:
+            fail(f"{package} is required by deltaos-persistence but not in 00-base.list")
+    ok("live persistence helper and boot parameter are consistent")
+
+
 def check_build_inputs() -> None:
     version = (ROOT / "VERSION").read_text().strip()
     if not re.match(r"^[0-9]+\.[0-9]+\.[0-9]+", version):
@@ -191,6 +229,7 @@ def main() -> int:
     check_grub_theme()
     check_artwork()
     check_packages()
+    check_persistence()
     check_build_inputs()
 
     for line in notes:

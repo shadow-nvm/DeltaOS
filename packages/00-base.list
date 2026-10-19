@@ -30,6 +30,10 @@ parted
 gparted
 dosfstools
 mtools
+# Used by deltaos-persistence to create the live persistence volume.
+# util-linux (sfdisk, mount) is essential and always present.
+e2fsprogs
+python3
 efibootmgr
 os-prober
 grub2-common

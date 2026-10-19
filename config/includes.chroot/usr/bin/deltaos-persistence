@@ -1,0 +1,705 @@
+#!/usr/bin/env python3
+"""Live-USB persistence helper for DeltaOS.
+
+A live session boots from a read-only ISO image, so every change lives in RAM
+and is gone after shutdown. Debian's live-boot can instead keep changes on a
+disk volume: a partition labelled ``persistence`` that holds a
+``persistence.conf`` file. This tool creates that volume on a USB stick,
+verifies an existing one, and reports whether the running session uses it.
+
+    sudo deltaos-persistence --make /dev/sdX      add the volume to a stick
+    sudo deltaos-persistence --format /dev/sdX2   use an existing partition
+    deltaos-persistence --status                  is this session persistent?
+    sudo deltaos-persistence --wizard             pick a stick from a list
+
+The live boot command line already contains ``persistence``, so the volume is
+used on the next boot as soon as it exists; ``nopersistence`` disables it.
+Nothing is written without an explicit confirmation, and the helper refuses a
+disk that holds the running system or has mounted partitions.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import shutil
+import subprocess
+import sys
+import tempfile
+import time
+from pathlib import Path
+
+LABEL = "persistence"
+ISO_LABEL = "DELTAOS"
+CONF_NAME = "persistence.conf"
+
+# persistence.conf(5): one line per mount, "DIR [OPTION]...". The "/ union"
+# workaround is how the whole live filesystem (not just selected directories)
+# is made persistent.
+CONF_TEXT = """\
+# DeltaOS live persistence.
+#
+# "/ union" keeps the writable overlay for the whole live filesystem on this
+# volume, so files, settings and installed packages survive a reboot.
+# See persistence.conf(5) for the general DIR [OPTION]... syntax.
+/ union
+"""
+
+MIN_BYTES = 1024 ** 3
+ALIGN_BYTES = 1024 ** 2
+SCRIPT_PATH = Path(__file__).resolve()
+
+
+class ToolError(RuntimeError):
+    """A problem the user can act on; printed without a traceback."""
+
+
+# --------------------------------------------------------------------------
+# small helpers
+
+
+def human_size(value: float) -> str:
+    units = ("B", "KB", "MB", "GB", "TB")
+    number = float(value)
+    for unit in units:
+        if number < 1024 or unit == units[-1]:
+            return f"{number:.1f} {unit}" if unit != "B" else f"{int(number)} B"
+        number /= 1024
+    return f"{int(value)} B"
+
+
+def run(command: list[str], *, input_text: str | None = None) -> subprocess.CompletedProcess[str]:
+    try:
+        return subprocess.run(command, capture_output=True, text=True,
+                              input=input_text, check=False)
+    except FileNotFoundError as exc:
+        raise ToolError(f"required tool is missing: {command[0]}") from exc
+
+
+def checked(command: list[str], *, input_text: str | None = None) -> str:
+    result = run(command, input_text=input_text)
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout).strip().splitlines()
+        message = detail[-1] if detail else f"exit status {result.returncode}"
+        raise ToolError(f"{' '.join(command)} failed: {message}")
+    return result.stdout
+
+
+def cmdline_options(text: str) -> dict[str, str | None]:
+    """Split /proc/cmdline into options; 'key=value' keeps its value."""
+    options: dict[str, str | None] = {}
+    for token in text.split():
+        name, separator, value = token.partition("=")
+        options[name] = value if separator else None
+    return options
+
+
+def persistence_requested(options: dict[str, str | None]) -> bool:
+    return "persistence" in options and "nopersistence" not in options
+
+
+def sync() -> None:
+    """Flush writes; os.sync exists on Linux, not on the test host."""
+    if hasattr(os, "sync"):
+        os.sync()
+
+
+def read_text(path: str) -> str:
+    try:
+        return Path(path).read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return ""
+
+
+# --------------------------------------------------------------------------
+# state of the running system
+
+
+def root_upper_dir() -> str | None:
+    """Return the overlay upperdir of '/', when the root is an overlay."""
+    for line in read_text("/proc/self/mountinfo").splitlines():
+        fields = line.split()
+        if len(fields) < 10 or fields[4] != "/":
+            continue
+        try:
+            separator = fields.index("-")
+        except ValueError:
+            continue
+        if fields[separator + 1] != "overlay":
+            continue
+        for option in fields[separator + 3].split(","):
+            if option.startswith("upperdir="):
+                return option.split("=", 1)[1]
+    return None
+
+
+def persistence_volumes() -> list[Path]:
+    root = Path("/live/persistence")
+    try:
+        return [item for item in sorted(root.iterdir()) if item.is_dir()]
+    except OSError:
+        return []
+
+
+def status() -> dict[str, object]:
+    options = cmdline_options(read_text("/proc/cmdline"))
+    live = Path("/run/live/medium").exists() or "boot=live" in options
+    requested = "persistence" in options
+    disabled = "nopersistence" in options
+    volumes = persistence_volumes() if live else []
+    upper = root_upper_dir()
+    active = bool(live and requested and not disabled and upper
+                  and upper.startswith("/live/persistence"))
+    return {
+        "live": live,
+        "requested": requested,
+        "disabled": disabled,
+        "volumes": volumes,
+        "upper": upper,
+        "active": active,
+    }
+
+
+def volume_from_upper(upper: str) -> str:
+    """Name the persistence volume, e.g. /live/persistence/sdb2."""
+    parts = [part for part in upper.split("/") if part]
+    if "persistence" in parts:
+        index = parts.index("persistence")
+        if index + 1 < len(parts):
+            return "/" + "/".join(parts[:index + 2])
+    return "/live/persistence"
+
+
+def status_line(state: dict[str, object]) -> str:
+    if not state["live"]:
+        return "Not a live session: persistence does not apply."
+    if state["active"]:
+        upper = str(state["upper"] or "")
+        where = volume_from_upper(upper) if upper else LABEL
+        return f"Persistent live session: changes are saved to {where}."
+    if state["disabled"]:
+        return "Live session is not persistent: 'nopersistence' disables saving."
+    if state["volumes"]:
+        return ("A persistence volume was found but is not in use; "
+                "reboot the live system to activate it.")
+    return "Live session is not persistent: no persistence volume was found."
+
+
+def print_status() -> int:
+    state = status()
+    print("DeltaOS live persistence")
+    print(f"  Session:          {'live' if state['live'] else 'installed'}")
+    if state["live"]:
+        print(f"  Boot parameter:   "
+              f"{'persistence' if state['requested'] else 'absent'}"
+              f"{' (overridden by nopersistence)' if state['disabled'] else ''}")
+        upper = state["upper"] or "not an overlay"
+        print(f"  Root filesystem:  {upper}")
+        volumes = state["volumes"]
+        print(f"  Volumes:          "
+              f"{', '.join(str(item) for item in volumes) if volumes else 'none found'}")
+    print(f"  Result:           {status_line(state)}")
+    if state["live"] and not state["active"]:
+        print()
+        print("  To enable it, run: sudo deltaos-persistence --wizard")
+        print("  The volume must exist before boot; a live session cannot")
+        print("  partition the stick it is running from.")
+    return 0 if state["active"] else 3
+
+
+# --------------------------------------------------------------------------
+# block devices
+
+
+def block_device(text: str) -> Path:
+    path = Path(text).expanduser()
+    if not path.is_absolute():
+        path = Path("/dev") / path
+    try:
+        resolved = path.resolve()
+    except OSError as exc:
+        raise ToolError(f"cannot resolve {text}: {exc}") from exc
+    if not Path("/sys/class/block", resolved.name).is_dir():
+        raise ToolError(f"{resolved} is not a block device")
+    return resolved
+
+
+def is_partition(path: Path) -> bool:
+    return Path("/sys/class/block", path.name, "partition").is_file()
+
+
+def lsblk_nodes(device: Path) -> list[dict[str, object]]:
+    result = run(["lsblk", "-J", "-b", "-o",
+                  "NAME,SIZE,LABEL,FSTYPE,MOUNTPOINT,TYPE,RM,TRAN,MODEL", str(device)])
+    if result.returncode != 0:
+        return []
+    try:
+        data = json.loads(result.stdout or "{}")
+    except ValueError:
+        return []
+    nodes: list[dict[str, object]] = []
+
+    def walk(items: list[dict[str, object]]) -> None:
+        for item in items:
+            nodes.append(item)
+            children = item.get("children")
+            if isinstance(children, list):
+                walk(children)
+
+    walk(data.get("blockdevices") or [])
+    return nodes
+
+
+def mount_points(device: Path) -> list[str]:
+    points: list[str] = []
+    for node in lsblk_nodes(device):
+        value = node.get("mountpoint")
+        if value:
+            points.append(str(value))
+        extra = node.get("mountpoints")
+        if isinstance(extra, list):
+            points.extend(str(item) for item in extra if item)
+    return sorted(set(points))
+
+
+def volume_label(device: Path) -> str | None:
+    for node in lsblk_nodes(device):
+        if node.get("name") == device.name:
+            return str(node["label"]) if node.get("label") else None
+    return None
+
+
+def holds_deltaos_image(device: Path) -> bool:
+    for node in lsblk_nodes(device):
+        label = str(node.get("label") or "")
+        if label.upper() == ISO_LABEL:
+            return True
+        if node.get("fstype") == "iso9660" and node.get("type") == "part":
+            return True
+    return False
+
+
+def find_persistence_partition(device: Path) -> Path | None:
+    for node in lsblk_nodes(device):
+        if str(node.get("label") or "") == LABEL:
+            path = Path("/dev") / str(node["name"])
+            return path.resolve() if path.exists() else path
+    return None
+
+
+def disk_name_of(source: str) -> str | None:
+    if not source:
+        return None
+    parent = run(["lsblk", "-no", "PKNAME", source]).stdout.strip()
+    if parent:
+        return parent.splitlines()[0].strip()
+    return Path(source).name
+
+
+def root_whole_disk() -> str | None:
+    return disk_name_of(run(["findmnt", "-no", "SOURCE", "/"]).stdout.strip())
+
+
+def live_medium_disk() -> str | None:
+    return disk_name_of(
+        run(["findmnt", "-no", "SOURCE", "/run/live/medium"]).stdout.strip())
+
+
+def partition_table(device: Path) -> dict[str, object]:
+    result = run(["sfdisk", "--json", str(device)])
+    if result.returncode != 0:
+        return {}
+    try:
+        return json.loads(result.stdout or "{}")
+    except ValueError:
+        return {}
+
+
+def plan_partition(table: dict[str, object], min_bytes: int = MIN_BYTES) -> dict[str, int]:
+    """Work out where a new partition fits. Pure so it can be unit tested."""
+    info = table.get("partitiontable") or {}
+    if not isinstance(info, dict):
+        raise ToolError("the disk has no MBR or GPT partition table")
+    label = str(info.get("label") or "")
+    if label not in ("dos", "gpt"):
+        raise ToolError(f"unsupported partition table '{label or 'unknown'}'")
+
+    sector = int(info.get("sectorsize") or 512)
+    last_sector = int(info.get("lastlba") or 0)
+    raw_parts = info.get("partitions") or []
+    parts = [part for part in raw_parts if isinstance(part, dict)]
+    if label == "dos" and len(parts) >= 4:
+        raise ToolError("all four primary MBR slots are in use; "
+                        "repartition the stick with GParted first")
+    if last_sector <= 0:
+        raise ToolError("the disk reports no usable sectors")
+
+    end = max((int(part.get("start", 0)) + int(part.get("size", 0)) - 1
+               for part in parts), default=0)
+    align = max(1, ALIGN_BYTES // sector)
+    start = ((end + 1 + align - 1) // align) * align
+    sectors = last_sector - start + 1
+    if sectors <= 0:
+        raise ToolError("no free space remains after the last partition")
+    size = sectors * sector
+    if size < min_bytes:
+        raise ToolError(f"only {human_size(size)} free; at least "
+                        f"{human_size(min_bytes)} is needed")
+    return {"start": start, "sectors": sectors, "bytes": size, "table": label}
+
+
+def reread_table(device: Path) -> None:
+    for command in (["partprobe", str(device)], ["blockdev", "--rereadpt", str(device)]):
+        if shutil.which(command[0]) and run(command).returncode == 0:
+            return
+    raise ToolError("the kernel did not re-read the partition table; "
+                    "unplug and reconnect the stick, then run --format on the "
+                    "new partition")
+
+
+# --------------------------------------------------------------------------
+# writing the volume
+
+
+def confirm(question: str, *, assume_yes: bool) -> bool:
+    if assume_yes:
+        return True
+    try:
+        answer = input(f"{question} [y/N] ").strip().lower()
+    except EOFError:
+        return False
+    return answer in ("y", "yes")
+
+
+def write_persistence_conf(mount_point: Path) -> None:
+    target = mount_point / CONF_NAME
+    try:
+        text = target.read_text(encoding="utf-8")
+    except OSError:
+        text = ""
+    directives = [line.split("#", 1)[0].strip() for line in text.splitlines()]
+    if "/ union" in directives:
+        print(f"  {target} already keeps the whole system.")
+        return
+    if text:
+        # Keep entries the volume already had; only add what is missing.
+        with target.open("a", encoding="utf-8") as handle:
+            handle.write("" if text.endswith("\n") else "\n")
+            handle.write("\n/ union\n")
+    else:
+        target.write_text(CONF_TEXT, encoding="utf-8")
+    target.chmod(0o644)
+    sync()
+    print(f"  Wrote {target}")
+
+
+def volume_fstype(device: Path) -> str:
+    for node in lsblk_nodes(device):
+        if node.get("name") == device.name:
+            return str(node.get("fstype") or "")
+    return ""
+
+
+def unmount(mount_dir: str) -> None:
+    result = run(["umount", mount_dir])
+    if result.returncode != 0:
+        sync()
+        checked(["umount", mount_dir])
+
+
+def ensure_conf(volume: Path) -> None:
+    """Write persistence.conf on an existing volume, changing nothing else."""
+    if mount_points(volume):
+        raise ToolError(f"{volume} is mounted; unmount it first")
+    filesystem = volume_fstype(volume)
+    if filesystem == "iso9660":
+        raise ToolError(f"{volume} is the live ISO image; it cannot hold persistence")
+    if filesystem not in ("ext2", "ext3", "ext4"):
+        raise ToolError(
+            f"{volume} holds {filesystem or 'no filesystem'}. The overlay needs a "
+            f"POSIX filesystem: run --format {volume} to create an ext4 volume.")
+    with tempfile.TemporaryDirectory(prefix="deltaos-persistence-") as mount_dir:
+        checked(["mount", str(volume), mount_dir])
+        try:
+            write_persistence_conf(Path(mount_dir))
+        finally:
+            unmount(mount_dir)
+    sync()
+
+
+def format_volume(partition: Path, *, assume_yes: bool) -> None:
+    if not is_partition(partition):
+        raise ToolError(f"{partition} is a whole disk, not a partition")
+    if mount_points(partition):
+        raise ToolError(f"{partition} is mounted; unmount it first")
+    filesystem = volume_fstype(partition)
+    label = volume_label(partition)
+    if filesystem == "iso9660":
+        raise ToolError(f"{partition} is the live ISO image; refusing to erase it")
+    if filesystem:
+        print(f"  {partition} already holds a {filesystem} filesystem"
+              f"{f' labelled {label}' if label else ''}.")
+        if not confirm(f"Erase {partition} and create the persistence volume?",
+                       assume_yes=assume_yes):
+            raise ToolError("cancelled; nothing was changed")
+    checked(["mkfs.ext4", "-F", "-q", "-L", LABEL, "-m", "0", str(partition)])
+    print(f"  Created an ext4 volume labelled '{LABEL}' on {partition}.")
+    ensure_conf(partition)
+
+
+def make_persistent(device: Path, *, assume_yes: bool, force: bool) -> None:
+    if is_partition(device):
+        raise ToolError(f"{device} is a partition; use --format for an existing "
+                        "partition or pass the whole disk to --make")
+
+    if device.name == root_whole_disk():
+        raise ToolError(f"{device} holds the running root filesystem")
+    if device.name == live_medium_disk():
+        raise ToolError(f"{device} is the USB stick this session booted from; "
+                        "a running live system cannot repartition it")
+    mounted = mount_points(device)
+    if mounted:
+        raise ToolError(
+            f"{device} has mounted partitions ({', '.join(mounted)}). Unmount "
+            "them first. A live session cannot repartition the stick it booted "
+            "from: use a second USB stick, or prepare the stick from an "
+            "installed DeltaOS or another Linux system.")
+
+    existing = find_persistence_partition(device)
+    if existing:
+        print(f"  {existing} is already labelled '{LABEL}'.")
+        ensure_conf(existing)
+        print(f"Done. Reboot without 'nopersistence' to use {existing}.")
+        return
+
+    if not holds_deltaos_image(device) and not force:
+        print(f"  {device} does not contain a DeltaOS live image.")
+        if not confirm("Use it as a persistence volume anyway?", assume_yes=False):
+            raise ToolError("cancelled; nothing was changed")
+
+    table = partition_table(device)
+    if not table.get("partitiontable"):
+        print(f"  {device} has no partition table; an MBR table will be created.")
+        if not confirm(f"Create a new partition table on {device}?", assume_yes=assume_yes):
+            raise ToolError("cancelled; nothing was changed")
+        checked(["sfdisk", "--label", "dos", str(device)])
+        table = partition_table(device)
+        if not table.get("partitiontable"):
+            raise ToolError(f"could not create a partition table on {device}")
+
+    plan = plan_partition(table)
+    print(f"  Plan: new partition at sector {plan['start']}, "
+          f"{human_size(plan['bytes'])} of free space, table {plan['table']}")
+    print("  Existing partitions are kept as they are.")
+    if not confirm("Create the persistence partition now?", assume_yes=assume_yes):
+        raise ToolError("cancelled; nothing was changed")
+
+    type_code = "83" if plan["table"] == "dos" else "linux"
+    script = f"start={plan['start']}, size={plan['sectors']}, type={type_code}\n"
+    checked(["sfdisk", "--append", str(device)], input_text=script)
+    reread_table(device)
+
+    partition = None
+    for _ in range(50):
+        table = partition_table(device)
+        info = table.get("partitiontable") or {}
+        for part in info.get("partitions") or []:
+            if int(part.get("start", -1)) == plan["start"]:
+                candidate = Path("/dev") / str(part.get("node", "")).rsplit("/", 1)[-1]
+                if candidate.exists():
+                    partition = candidate
+                    break
+        if partition:
+            break
+        time.sleep(0.1)
+    if partition is None:
+        raise ToolError("the new partition did not appear; unplug the stick, "
+                        "reconnect it, and run --format on the new partition")
+
+    print(f"  New partition: {partition}")
+    format_volume(partition, assume_yes=assume_yes)
+    print()
+    print(f"Done. {partition} will be used as persistence on the next live boot.")
+    print("Check it later with: deltaos-persistence --status")
+
+
+
+def check_only(device: Path) -> None:
+    if is_partition(device):
+        mounted = mount_points(device)
+        print(f"{device}: partition, label={volume_label(device) or 'none'}, "
+              f"mounted={', '.join(mounted) if mounted else 'no'}")
+        return
+    print(f"{device}: whole disk")
+    print(f"  DeltaOS image:   {'yes' if holds_deltaos_image(device) else 'no'}")
+    print(f"  Mounted at:      {', '.join(mount_points(device)) or 'nothing'}")
+    print(f"  Persistence:     {find_persistence_partition(device) or 'not present'}")
+    table = partition_table(device)
+    if not table.get("partitiontable"):
+        print("  Partition table: none (a new one would be created)")
+        return
+    info = table.get("partitiontable") or {}
+    print(f"  Partition table: {info.get('label', 'unknown')}")
+    for part in info.get("partitions") or []:
+        size = int(part.get("size", 0)) * int(info.get("sectorsize") or 512)
+        print(f"    {part.get('node', '?')}: {human_size(size)} "
+              f"from sector {part.get('start')}")
+    try:
+        plan = plan_partition(table)
+    except ToolError as exc:
+        print(f"  Free space:      not usable ({exc})")
+    else:
+        print(f"  Free space:      {human_size(plan['bytes'])} usable")
+
+
+def candidate_disks() -> list[dict[str, object]]:
+    result = run(["lsblk", "-J", "-b", "-o",
+                  "NAME,SIZE,MODEL,TRAN,RM,TYPE,LABEL,MOUNTPOINT"])
+    if result.returncode != 0:
+        return []
+    try:
+        data = json.loads(result.stdout or "{}")
+    except ValueError:
+        return []
+    root_disk = root_whole_disk()
+    candidates: list[dict[str, object]] = []
+    for node in data.get("blockdevices") or []:
+        if node.get("type") != "disk":
+            continue
+        removable = str(node.get("rm")) in ("1", "True", "true")
+        if not removable and node.get("tran") != "usb":
+            continue
+        if node.get("name") == root_disk:
+            continue
+        candidates.append(node)
+    return candidates
+
+
+def escalate(arguments: list[str]) -> int:
+    pkexec = shutil.which("pkexec")
+    if not pkexec:
+        raise ToolError("administrator rights are required; run this command "
+                        "with sudo in a terminal")
+    print("  Administrator permission is required; a system dialog will ask for it.")
+    return subprocess.call([pkexec, sys.executable, str(SCRIPT_PATH), *arguments])
+
+
+def wizard(assume_yes: bool) -> int:
+    print_status()
+    print()
+    state = status()
+    if not state["live"]:
+        print("Persistence only applies to a live USB session.")
+        return 3
+    if state["active"]:
+        print("This session is already persistent; nothing to do.")
+        return 0
+
+    disks = candidate_disks()
+    if not disks:
+        print("No removable USB disk was found. Plug one in and run --wizard again.")
+        return 1
+    print("Removable disks:")
+    for index, node in enumerate(disks, 1):
+        size = human_size(float(node.get("size") or 0))
+        model = str(node.get("model") or "USB disk").strip() or "USB disk"
+        label = f", label {node['label']}" if node.get("label") else ""
+        print(f"  {index}. /dev/{node['name']}  {size}  {model}{label}")
+    print("  q. cancel")
+    try:
+        choice = input("Choose the disk to use for persistence: ").strip().lower()
+    except EOFError:
+        return 1
+    if choice in ("q", "quit", ""):
+        print("Cancelled; nothing was changed.")
+        return 1
+    try:
+        node = disks[int(choice) - 1]
+    except (ValueError, IndexError):
+        print("That is not one of the listed disks.")
+        return 2
+    device = Path("/dev") / str(node["name"])
+    print()
+    print(f"  Selected {device} ({human_size(float(node.get('size') or 0))}).")
+    print("  Existing partitions on it are kept; only free space is used.")
+    if not confirm("Continue?", assume_yes=assume_yes):
+        print("Cancelled; nothing was changed.")
+        return 1
+
+    force = not holds_deltaos_image(device)
+    arguments = ["--make", str(device), "--yes"]
+    if force:
+        arguments.append("--force")
+    if os.geteuid() != 0:
+        return escalate(arguments)
+    make_persistent(device, assume_yes=True, force=force)
+    print("Reboot the live system to activate persistence.")
+    return 0
+
+
+# --------------------------------------------------------------------------
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="deltaos-persistence",
+        description="Create and check the DeltaOS live-USB persistence volume.",
+        epilog="The live boot command line already contains 'persistence'; "
+               "'nopersistence' turns saving off for one boot.")
+    actions = parser.add_mutually_exclusive_group()
+    actions.add_argument("--status", action="store_true",
+                         help="report whether this live session is persistent")
+    actions.add_argument("--brief", action="store_true",
+                         help="one-line status, for desktop apps")
+    actions.add_argument("--make", metavar="DISK",
+                         help="add a persistence partition to a USB disk")
+    actions.add_argument("--format", metavar="PARTITION",
+                         help="format an existing partition as the volume")
+    actions.add_argument("--check", metavar="DISK",
+                         help="describe a disk without changing it")
+    actions.add_argument("--wizard", action="store_true",
+                         help="pick a removable disk interactively")
+    parser.add_argument("--yes", action="store_true",
+                        help="skip confirmation prompts (for scripts)")
+    parser.add_argument("--force", action="store_true",
+                        help="allow a disk that holds no DeltaOS image")
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = build_parser()
+    arguments = parser.parse_args(argv)
+    try:
+        if arguments.brief:
+            print(status_line(status()))
+            return 0 if status()["active"] else 3
+        if arguments.wizard:
+            return wizard(arguments.yes)
+        if arguments.status or not any((arguments.make, arguments.format,
+                                        arguments.check)):
+            return print_status()
+        if arguments.check:
+            check_only(block_device(arguments.check))
+            return 0
+        if os.geteuid() != 0:
+            raise ToolError("administrator rights are required; run this "
+                            "command with sudo")
+        if arguments.make:
+            make_persistent(block_device(arguments.make), assume_yes=arguments.yes,
+                            force=arguments.force)
+            return 0
+        partition = block_device(arguments.format)
+        format_volume(partition, assume_yes=arguments.yes)
+        print(f"Done. {partition} will be used as persistence on the next live boot.")
+        return 0
+    except ToolError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    except KeyboardInterrupt:
+        print("\ncancelled", file=sys.stderr)
+        return 130
+
+
+if __name__ == "__main__":
+    sys.exit(main())
