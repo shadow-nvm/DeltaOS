@@ -60,6 +60,13 @@ rsync -a --delete \
 
 echo "==> building the $PROFILE image"
 cd "$BUILD_ROOT"
+
+echo "==> checking the build environment"
+if ! bash ./build/preflight.sh "$BUILD_ROOT/build/work"; then
+    echo "ERROR: fix the FAIL lines above, then run the build again." >&2
+    exit 1
+fi
+
 bash ./build/build-iso.sh "$PROFILE" "$@"
 
 echo "==> copying the ISO back to the Windows checkout"

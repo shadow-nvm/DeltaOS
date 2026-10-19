@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import configparser
+import os
 import platform
 import shlex
 import shutil
@@ -53,6 +54,55 @@ def read_os_release() -> dict[str, str]:
 
 def command_exists(name: str) -> bool:
     return shutil.which(name) is not None
+
+
+def read_text(path: str) -> str:
+    try:
+        return Path(path).read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return ""
+
+
+def session_type() -> str:
+    value = os.environ.get("XDG_SESSION_TYPE", "").strip().lower()
+    if value == "wayland":
+        return "Wayland"
+    if value == "x11":
+        return "X11"
+    if os.environ.get("WAYLAND_DISPLAY"):
+        return "Wayland"
+    if os.environ.get("DISPLAY"):
+        return "X11"
+    return "Unknown"
+
+
+def secure_boot_state() -> str:
+    """Read the EFI SecureBoot variable; a legacy BIOS has no EFI at all."""
+    if not Path("/sys/firmware/efi").is_dir():
+        return "Legacy BIOS"
+    # The first four bytes are the EFI variable attributes, the fifth is the
+    # SecureBoot value (0 disabled, 1 enabled) for the well known GUID.
+    raw = Path("/sys/firmware/efi/efivars/"
+               "SecureBoot-8be4df61-93ca-11d2-aa0d-00e098032b8c")
+    try:
+        data = raw.read_bytes()
+    except OSError:
+        return "Unavailable"
+    if len(data) < 5:
+        return "Unavailable"
+    return "Enabled" if data[4] else "Disabled"
+
+
+def wireless_adapters() -> int | None:
+    try:
+        nodes = list(Path("/sys/class/net").iterdir())
+    except OSError:
+        return None
+    return sum(1 for node in nodes if (node / "wireless").exists())
+
+
+def zram_active() -> bool:
+    return Path("/sys/block/zram0").exists()
 
 
 def deltaos_version() -> str:
@@ -302,6 +352,27 @@ class DeltaHub(QMainWindow):
                 self.status_labels[key] = value
                 grid.addWidget(card)
             layout.addLayout(grid)
+            card, card_layout = make_card(
+                "This computer",
+                "How DeltaOS is running on this hardware. Anything marked as "
+                "missing here is worth checking before you install.")
+            adapters = wireless_adapters()
+            if adapters is None:
+                wifi = "unknown"
+            elif adapters == 0:
+                wifi = "no adapter detected"
+            else:
+                wifi = f"{adapters} adapter(s)"
+            for label, value in [
+                ("Session", session_type()),
+                ("Firmware", secure_boot_state()),
+                ("Wi-Fi", wifi),
+                ("Compressed swap", "active" if zram_active() else "not active"),
+            ]:
+                row = QLabel(f"{label}  ·  {value}")
+                row.setObjectName("statusLine")
+                card_layout.addWidget(row)
+            layout.addWidget(card)
             if IS_LIVE:
                 self.add_action_card(
                     layout, "Install DeltaOS on this computer",

@@ -63,6 +63,14 @@ fi
 # image and /usr/bin/deltaos-install still moves it aside if it reappears.
 rm -f /etc/fstab
 
+# calamares-settings-debian ships its own launcher and an autostart entry that
+# puts an "Install Debian" icon on the desktop of every session. DeltaOS
+# replaces both with its own live-only entry, so the Debian ones must go or the
+# live desktop advertises the wrong operating system.
+rm -f /etc/xdg/autostart/calamares-desktop-icon.desktop
+rm -f /usr/share/applications/calamares-install-debian.desktop
+rm -f /usr/share/applications/calamares-install-debian.desktop.bak
+
 # ---------------------------------------------------------------------------
 # SDDM: pick a theme that actually exists in this image. Without an explicit
 # theme, a greeter with no theme installed shows no login screen at all.
@@ -104,6 +112,22 @@ VERSION_ID="${DELTA_VERSION}"
 VERSION_CODENAME=trixie
 ANSI_COLOR="0;36"
 EOF
+
+# The installed system inherits these files from the squashfs: without them a
+# freshly installed DeltaOS would call itself "debian" and show Debian's text
+# console banner. The live session is unaffected (live-config sets the hostname
+# from the kernel command line on every boot).
+echo deltaos > /etc/hostname
+if grep -q '^127\.0\.1\.1' /etc/hosts 2>/dev/null; then
+    sed -i 's/^127\.0\.1\.1.*/127.0.1.1\tdeltaos/' /etc/hosts
+else
+    printf '127.0.1.1\tdeltaos\n' >> /etc/hosts
+fi
+{
+    echo "DeltaOS Aurora ${DELTA_VERSION} \\n \\l"
+    echo
+} > /etc/issue
+cp /etc/issue /etc/issue.net
 
 # Wallpaper package, so the DeltaOS wallpapers also appear in System Settings.
 WALLPAPER_DIR=/usr/share/wallpapers/DeltaOS/contents/images

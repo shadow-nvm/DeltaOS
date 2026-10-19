@@ -54,6 +54,15 @@ fi
 mkdir -p "$WORK" "$OUT"
 cd "$WORK"
 
+# A build that runs out of disk space fails after an hour, in the binary stage,
+# with an error that does not mention disk space at all. Check it up front.
+FREE_GB="$(df -Pk "$WORK" | awk 'NR==2 { print int($4 / 1024 / 1024) }')"
+if [[ "${FREE_GB:-0}" -lt 12 ]]; then
+    die "only ${FREE_GB:-0} GB free under $WORK; a full build needs at least 12 GB (20 GB recommended)"
+elif [[ "${FREE_GB:-0}" -lt 20 ]]; then
+    log "warning: only ${FREE_GB} GB free; 20 GB is recommended"
+fi
+
 # "persistence" tells live-boot to look for a disk volume labelled
 # "persistence" holding a persistence.conf file (see deltaos-persistence).
 # Without such a volume the session stays read-only, exactly as before.

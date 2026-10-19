@@ -61,6 +61,19 @@ Budget about 20 GB of free disk space, 4 GB of RAM (8 GB is comfortable) and a
 fast internet connection. The first build downloads roughly 1.5–2.5 GB of
 Debian packages and takes 30–90 minutes depending on the machine.
 
+## Check the build machine first
+
+Inside the Linux environment (WSL, Docker, or a Debian/Ubuntu host), run:
+
+```bash
+bash build/preflight.sh
+```
+
+It checks the host tools live-build needs (`lb`, `debootstrap`, `xorriso`,
+`mksquashfs`, `grub-pc-bin`, Pillow), free disk space, memory and whether the
+Debian mirror is reachable, and prints PASS/WARN/FAIL for each. Fixing a FAIL
+here saves a build that would otherwise die in the last stage.
+
 ## Build the ISO
 
 ### Windows, with Docker Desktop
@@ -253,6 +266,7 @@ ISO erases the volume.
 | Path | Purpose |
 | --- | --- |
 | `build/build-iso.sh` | Linux live-build workflow: config, artwork, hooks, ISO |
+| `build/preflight.sh` | Verifies a build machine before a long build |
 | `build/build-windows.ps1` | Windows PowerShell wrapper using Docker Desktop |
 | `build/docker-build.sh` | Docker/Podman wrapper for any host |
 | `build/Dockerfile` | Reproducible Debian 13 builder image |

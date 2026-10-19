@@ -435,6 +435,7 @@ def check_build_inputs() -> None:
         fail(f"VERSION is not a semantic version: {version!r}")
     for script in ("build/build-iso.sh", "build/wsl-build.sh",
                    "build/apply-grub-theme.sh", "build/build-windows.ps1",
+                   "build/docker-build.sh", "build/preflight.sh",
                    "build/Dockerfile"):
         if not (ROOT / script).is_file():
             fail(f"build entry point missing: {script}")
